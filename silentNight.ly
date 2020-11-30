@@ -308,6 +308,32 @@ vBaccAA = \relative c'' {
   aes8 ( bes c g bes aes |
   g f ees4 ) r4 |
 }
+vBaccAB = \relative c' {
+  \key aes \major
+  \time 3/4
+  R2.*3 |
+  r2 c4 |
+  des2 r4 
+  r4 bes4 bes4 |
+  c2 r4 |
+  r2 c4 |
+  des2 r4 |
+  R2. |
+  r2 aes4 |
+  aes bes c |
+  ees ( des2 ) |
+  R2. |
+  r2 aes4 ~ |
+  aes bes c |
+  ees2 r4 |
+  ees4. ees8 des4 |
+  c2. (|
+  des2.) |
+  ees2. ~ |
+  ees4 r ees4 |
+  c2. ~ |
+  c2 r4 |
+}
 
 vBaccBA = \relative c'' {
   \key aes \major
@@ -336,6 +362,35 @@ vBaccBA = \relative c'' {
   c ( bes aes ) aes' g ( f ) |
   ees8 ( des c bes aes aes' |
   g f ees4 ) r |
+}
+
+vBaccBB = \relative c'' {
+  \key aes \major
+  \time 3/4
+  R2. |
+  r8 aes ( g f ees ) r |
+  R2. |
+  r2 aes8 (g |
+  f ees) r4 r4 |
+  R2. |
+  r4. aes8 (g) f |
+  ees aes (g) f ees4 |
+  des4. r8 bes'4 ~ |
+  bes2. ~ |
+  bes4. ( aes8 ) g ( f ) |
+  ees4 r4 bes' ~ |
+  bes2. ~ |
+  bes2 aes4 ~ |
+  aes4 r8 aes g f |
+  ees4 r f ~ |
+  f2 g4 ~ |
+  g2 r4 |
+  r2 g4 ~ |
+  g2 f4 ~ ( |
+  f ees2) |
+  r4 bes'4 g4 ~ |
+  g f g |
+  aes2 r4 |
 }
 
 vCaccAA = \relative c' {
@@ -901,6 +956,28 @@ lMelodyB = \lyricmode {
   Christ the Sa -- vior is born.
   Christ the Sa -- vior is born.
 }
+lvBaccAB = \lyricmode {
+  ly night
+  Shep -- herds quake
+  the sight.
+  A -- far Glo -- ries stream
+  Hal -- le -- lu -- ia!
+  Sa -- vior is born.
+  Christ is born.
+}
+lvBaccBB = \lyricmode {
+  a
+  a
+  At the sight
+  At the sight
+  Glo
+  Glo -- ries stream
+  far sing
+  Hal -- le -- lu -- ia!
+  Christ is born
+  Christ is born
+  Christ is born
+}
 lMelodyC = \lyricmode {
   Si -- lent night,
   ho -- ly night!
@@ -1027,6 +1104,8 @@ lvCaccFC = \lyricmode {
   \new Lyrics \lyricsto "harmA" { \lMelodyB }  
   \new Staff { \new Voice = "melody" { \melodyB } }
   \new Lyrics \lyricsto "melody" { \lMelodyB }  
+  \new Staff { \new Voice = "harmB" { \vBaccAB } }
+  \new Lyrics \lyricsto "harmB" { \lvBaccAB }  
 >>
 
 \markup { \bold "Verse 2, Take 3" }
@@ -1034,6 +1113,8 @@ lvCaccFC = \lyricmode {
 \new ChoirStaff <<
   \new Staff { \new Voice = "harmA" { \vBaccBA } }
   \new Lyrics \lyricsto "harmA" { \lMelodyB }  
+  \new Staff { \new Voice = "harmB" { \vBaccBB } }
+  \new Lyrics \lyricsto "harmB" { \lvBaccBB }  
   \new Staff { \new Voice = "melody" { \melodyB } }
   \new Lyrics \lyricsto "melody" { \lMelodyB }  
 >>
