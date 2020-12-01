@@ -2,26 +2,31 @@ module Klank.NatureBoy where
 
 import Prelude
 import Color (Color, rgb, rgba)
+import Control.Monad.Reader (Reader, ask, runReader)
 import Control.Parallel (parallel, sequential)
 import Control.Promise (toAffE)
-import Data.Array (catMaybes, filter, fold, head, range)
-import Data.Either (Either, either)
+import Data.Array (catMaybes, drop, filter, fold, head, range, zip)
+import Data.DateTime.Instant (Instant, unInstant)
+import Data.Either (Either(..), either, isLeft)
 import Data.Foldable (class Foldable, foldl, traverse_)
-import Data.Int (toNumber)
+import Data.Int (floor, toNumber)
 import Data.Lens (_2, over)
 import Data.List (List(..), (:))
-import Data.Maybe (Maybe(..), isJust, maybe)
+import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe, maybe')
 import Data.Newtype (wrap)
 import Data.NonEmpty (NonEmpty, (:|))
 import Data.Profunctor (lcmap)
 import Data.String (Pattern(..), indexOf)
 import Data.Traversable (sequence)
 import Data.Tuple (Tuple(..), fst)
-import Data.Typelevel.Num (D10, D2, D24, D3, D4, D5, D6)
-import Data.Vec (Vec, empty, (+>))
+import Data.Typelevel.Num (class Nat, D10, D2, D24, D3, D4, D42, D5, D6, d0, d1, d2, d3, d4, d5)
+import Data.Vec (Vec, empty, fill, (+>))
+import Data.Vec as V
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), delay, try)
 import Effect.Exception (Error)
+import Effect.Now (now)
+import Effect.Random (random)
 import Effect.Ref as Ref
 import FRP.Behavior (Behavior, behavior)
 import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, BrowserAudioBuffer, CanvasInfo(..), Instruction, decodeAudioDataFromUri, defaultExporter, evalPiecewise, gain_, runInBrowser_, speaker')
@@ -30,8 +35,10 @@ import Foreign.Object as O
 import Graphics.Canvas (Rectangle)
 import Graphics.Drawing (Drawing, Point, circle, fillColor, filled, rectangle, text)
 import Graphics.Drawing.Font (FontOptions, bold, font, italic, sansSerif)
-import Math (pow, (%))
+import Math (pow, sin, cos, pi, (%))
+import Random.LCG (mkSeed)
 import Record.Extra (SLProxy(..), SNil)
+import Test.QuickCheck.Gen (evalGen, shuffle)
 import Type.Data.Graph (type (:/))
 import Type.Klank.Dev (Klank', affable, defaultEngineInfo, klank)
 import Web.Event.EventTarget (addEventListener, eventListener, removeEventListener)
@@ -140,11 +147,13 @@ data ExplodeStage
   = ExplodeStage0 (Maybe Number)
   | ExplodeStage1 (Vec D4 (Maybe Number))
 
-data Effects
+derive instance eqExplodeStage :: Eq ExplodeStage
+
+data PlayerEvent
   = Triangle (Vec D3 (Maybe Number))
   | Square (Vec D4 (Maybe Number))
-  | Motion Point
-  | Rise (Vec D6 (Tuple Number Boolean)) -- pos, stopped
+  | Motion (Either Point Point) -- resting point or offset from mouse
+  | Rise (Vec D6 (Tuple Number (Maybe Number))) -- pos, stopped
   | Towards (Vec D4 (Either Point Number))
   | Explode ExplodeStage
   | Large (List (Tuple Point Number)) -- pos, startT
@@ -152,18 +161,24 @@ data Effects
   | Tether (Tuple Point Boolean) -- pos, holding
   | Gears (Vec D5 (Maybe Number))
   | Shrink (Vec D10 (Maybe Number))
-  | Snow
-  | NoEffect Number -- time
+  | Snow (Vec D42 (Maybe Number))
+  | NoEvent Number -- time
+
+derive instance eqPlayerEvent :: Eq PlayerEvent
+
+type SilentNightPlayerT
+  = { verse :: Verse
+    , verseOne :: VerseChoice
+    , verseTwo :: VerseChoice
+    , verseThree :: VerseChoice
+    , playerEvents :: Array PlayerEvent
+    , eventStart :: Number
+    }
 
 data Activity
   = Intro
   | HarmChooser { step :: HarmChooserStep }
-  | SilentNightPlayer
-    { verse :: Verse
-    , verseOne :: VerseChoice
-    , verseTwo :: VerseChoice
-    , verseThree :: VerseChoice
-    }
+  | SilentNightPlayer SilentNightPlayerT
 
 derive instance eqActivity :: Eq Activity
 
@@ -215,42 +230,48 @@ versionToInt VersionSeven = 6
 
 versionToInt VersionEight = 7
 
-chooseVerseOne :: VerseChoice -> SilentNightAccumulator -> CanvasInfo -> Number -> Tuple SilentNightAccumulator Drawing
-chooseVerseOne vc acc ci time = makeCanvas (acc { activity = HarmChooser { step: Row2Animation { startsAt: time, verseOne: vc } } }) ci time
+chooseVerseOne :: VerseChoice -> SilentNightAccumulator -> Number -> MakeCanvasT
+chooseVerseOne vc acc time = makeCanvas (acc { activity = HarmChooser { step: Row2Animation { startsAt: time, verseOne: vc } } }) time
 
-chooseVerseTwo :: VerseChoice -> VerseChoice -> SilentNightAccumulator -> CanvasInfo -> Number -> Tuple SilentNightAccumulator Drawing
-chooseVerseTwo v1 vc acc ci time = makeCanvas (acc { activity = HarmChooser { step: Row3Animation { startsAt: time, verseOne: v1, verseTwo: vc } } }) ci time
+chooseVerseTwo :: VerseChoice -> VerseChoice -> SilentNightAccumulator -> Number -> MakeCanvasT
+chooseVerseTwo v1 vc acc time = makeCanvas (acc { activity = HarmChooser { step: Row3Animation { startsAt: time, verseOne: v1, verseTwo: vc } } }) time
 
-chooseVerseThree :: VerseChoice -> VerseChoice -> VerseChoice -> SilentNightAccumulator -> CanvasInfo -> Number -> Tuple SilentNightAccumulator Drawing
-chooseVerseThree v1 v2 vc acc ci time = makeCanvas (acc { activity = HarmChooser { step: FadeOutAnimation { startsAt: time, verseOne: v1, verseTwo: v2, verseThree: vc } } }) ci time
+chooseVerseThree :: VerseChoice -> VerseChoice -> VerseChoice -> SilentNightAccumulator -> Number -> MakeCanvasT
+chooseVerseThree v1 v2 vc acc time = makeCanvas (acc { activity = HarmChooser { step: FadeOutAnimation { startsAt: time, verseOne: v1, verseTwo: v2, verseThree: vc } } }) time
+
+makeCircleDim :: Number -> Number -> Number
+makeCircleDim w i = ((w / circleDivisor) - (i * 3.0))
 
 doVAction :: SilentNightAccumulator -> Number -> Number -> VerseChoice -> Boolean
 doVAction acc w h vc =
   let
     i = (toNumber <<< versionToInt) vc
 
-    dim = ((w / circleDivisor) - (i * 5.0))
+    dim = makeCircleDim w i
 
-    halfDim = dim / 2.0
+    twoDim = 2.0 * dim
+
+    out =
+      doAction acc
+        { x: ((2.0 * i + 1.0) * w / 16.0) - dim
+        , y: h - dim
+        , width: twoDim
+        , height: twoDim
+        }
   in
-    doAction acc
-      { x: ((2.0 * i + 1.0) * w / 16.0) - halfDim
-      , y: h - halfDim
-      , width: dim
-      , height: dim
-      }
+    out
 
-verseVersionChooser :: (VerseChoice -> SilentNightAccumulator -> CanvasInfo -> Number -> Tuple SilentNightAccumulator Drawing) -> Number -> Number -> SilentNightAccumulator -> CanvasInfo -> Number -> Tuple SilentNightAccumulator Drawing
-verseVersionChooser vc w h acc ci time
-  | doVAction acc w h VersionOne = vc VersionOne acc ci time
-  | doVAction acc w h VersionTwo = vc VersionTwo acc ci time
-  | doVAction acc w h VersionThree = vc VersionThree acc ci time
-  | doVAction acc w h VersionFour = vc VersionFour acc ci time
-  | doVAction acc w h VersionFive = vc VersionFive acc ci time
-  | doVAction acc w h VersionSix = vc VersionSix acc ci time
-  | doVAction acc w h VersionSeven = vc VersionSeven acc ci time
-  | doVAction acc w h VersionEight = vc VersionSeven acc ci time
-  | otherwise = Tuple acc (circles w h (const 1.0) 1.0)
+verseVersionChooser :: (VerseChoice -> SilentNightAccumulator -> Number -> MakeCanvasT) -> Number -> Number -> Drawing -> SilentNightAccumulator -> Number -> MakeCanvasT
+verseVersionChooser vc w h d acc time
+  | doVAction acc w h VersionOne = vc VersionOne acc time
+  | doVAction acc w h VersionTwo = vc VersionTwo acc time
+  | doVAction acc w h VersionThree = vc VersionThree acc time
+  | doVAction acc w h VersionFour = vc VersionFour acc time
+  | doVAction acc w h VersionFive = vc VersionFive acc time
+  | doVAction acc w h VersionSix = vc VersionSix acc time
+  | doVAction acc w h VersionSeven = vc VersionSeven acc time
+  | doVAction acc w h VersionEight = vc VersionEight acc time
+  | otherwise = pure $ Tuple acc (d <> circles w h (const 1.0) 1.0)
 
 data HarmChooserStep
   = Row1Animation { startsAt :: Number }
@@ -265,6 +286,7 @@ derive instance eqHarmChooserStep :: Eq HarmChooserStep
 
 type SilentNightAccumulator
   = { initiatedClick :: Boolean
+    , inClick :: Boolean
     , curClickId :: Maybe Int
     , mousePosition :: Maybe { x :: Number, y :: Number }
     , activity :: Activity
@@ -275,6 +297,9 @@ inRect p r = p.x >= r.x && p.y >= r.y && p.x <= (r.x + r.width) && p.y <= (r.y +
 
 doAction :: SilentNightAccumulator -> Rectangle -> Boolean
 doAction acc r = acc.initiatedClick && (maybe false (flip inRect r) acc.mousePosition)
+
+doingAction :: SilentNightAccumulator -> Rectangle -> Boolean
+doingAction acc r = acc.inClick && (maybe false (flip inRect r) acc.mousePosition)
 
 boldItalic :: FontOptions
 boldItalic = bold <> italic
@@ -303,11 +328,15 @@ instructionFadeOut = instructionStay + stay :: Number
 
 instructionDark = instructionFadeOut + fadeOut :: Number
 
-circleFan = 2.0 :: Number
+circleArrives = 2.0 :: Number
+
+circleFanOut = 3.0 :: Number
+
+circleIntro = circleArrives + circleFanOut :: Number
 
 circleFade = 0.5 :: Number
 
-circleFlyAway = 3.0 :: Number
+circleFlyAway = 5.0 :: Number
 
 calcSlope :: Number -> Number -> Number -> Number -> Number -> Number
 calcSlope x0 y0 x1 y1 x =
@@ -332,15 +361,21 @@ introOpacity time
   | time < instructionDark = calcSlope instructionFadeOut 1.0 instructionDark 0.0 time
   | otherwise = 0.0
 
-circleDivisor = 9.0 :: Number
+circleDivisor = 18.0 :: Number
 
 whiteRGBA = rgba 255 255 255 :: Number -> Color
 
+cosRamp :: Number -> Number
+cosRamp n = -0.5 * cos (n * pi) + 0.5
+
+cosPRamp :: Number -> Number -> Number
+cosPRamp p n = (-0.5 * cos (n * pi) + 0.5) `pow` p
+
 circles :: Number -> Number -> (VerseChoice -> Number) -> Number -> Drawing
-circles w h opq traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA (opq i'))) (circle ((2.0 * i + 1.0) * w * traj / 16.0) h ((w / circleDivisor) - (i * 5.0)))) verseChoices)
+circles w h opq traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA (opq i'))) (circle ((2.0 * i * traj + 1.0) * w / 16.0) h (makeCircleDim w i))) verseChoices)
 
 circleFanner :: Number -> Number -> Number -> Number -> Drawing
-circleFanner w h startsAt time = circles w h (const $ min 1.0 ((time - startsAt) / circleFade)) (min 1.0 ((time - startsAt) / circleFan))
+circleFanner w h startsAt time = let nTime = time - startsAt in circles w h (\v -> if nTime < circleArrives then (if v == VersionOne then (nTime / circleArrives) else 0.0) else 1.0) (if nTime < circleArrives then 0.0 else cosPRamp 1.4 $ min 1.0 ((nTime - circleArrives) / circleFanOut))
 
 circleChoice :: Number -> Number -> VerseChoice -> Number -> Number -> Drawing
 circleChoice w h vc startsAt time = circles w h (\v -> if v == vc then 1.0 else max 0.3 (1.0 - (time - startsAt) / (0.7 * circleFade))) 1.0
@@ -466,67 +501,477 @@ circleOutro vs vc chosen w h startsAt time =
 
     (Tuple x0 y0) = circleOutroStart w h vs vc
 
-    (Tuple x1 y1) = circleOutroStart w h vs vc
+    (Tuple x1 y1) = circleOutroEnd w h vs vc
 
-    x = calcSlope 0.0 x0 circleFlyAway x1 (time - startsAt)
+    x = calcSlope 0.0 x0 1.0 x1 (cosPRamp 1.7 $ (time - startsAt) / circleFlyAway)
 
-    y = calcSlope 0.0 y0 circleFlyAway y1 (time - startsAt)
+    y = calcSlope 0.0 y0 1.0 y1 (cosPRamp 1.7 $ (time - startsAt) / circleFlyAway)
   in
-    filled (fillColor (whiteRGBA opq)) (circle x y ((w / circleDivisor) - (i * 5.0)))
+    filled (fillColor (whiteRGBA opq)) (circle x y (makeCircleDim w i))
 
-makeCanvas :: SilentNightAccumulator -> CanvasInfo -> Number -> (Tuple SilentNightAccumulator Drawing)
-makeCanvas acc ci@(CanvasInfo { w, h }) time = over _2 (append (filled (fillColor (rgb 0 0 0)) (rectangle 0.0 0.0 w h))) go
+type MakeCanvasT
+  = Reader { evts :: Array PlayerEvent, w :: Number, h :: Number } (Tuple SilentNightAccumulator Drawing)
+
+standardIntro = 1.0 :: Number
+
+standardOutro = 3.0 :: Number
+
+standardPress = 0.5 :: Number
+
+motionNormal = 5.0 :: Number
+
+riseNormal = 4.0 :: Number
+
+pressEffect :: Number -> Number -> Number -> Number
+pressEffect cw press time
+  | time < press / 2.0 = cw + (time * cw * 0.1 / press)
+  | time < press = cw + ((press - time) * cw * 0.1 / press)
+  | otherwise = cw
+
+newCanvas :: SilentNightPlayerT -> SilentNightAccumulator -> Number -> MakeCanvasT
+newCanvas i acc time =
+  makeCanvas
+    ( acc
+        { activity =
+          SilentNightPlayer
+            ( i
+                { playerEvents = drop 1 i.playerEvents
+                , eventStart = time
+                }
+            )
+        }
+    )
+    time
+
+sinp :: Number -> Number -> Number
+sinp v p = (v * ((sin (p)) * 0.5 + 0.5) * 0.9 + 0.05)
+
+cosp :: Number -> Number -> Number
+cosp v p = (v * ((cos (p)) * 0.5 + 0.5) * 0.9 + 0.05)
+
+sqToRect :: Number -> Number -> Number -> Rectangle
+sqToRect x y r = { x: x - r, y: y - r, width: 2.0 * r, height: 2.0 * r }
+
+nextObj :: forall n a. Nat n => (Vec n a -> PlayerEvent) -> SilentNightAccumulator -> SilentNightPlayerT -> (Number -> Vec n a) -> Number -> MakeCanvasT
+nextObj pef acc i tf time =
+  makeCanvas
+    ( acc
+        { activity =
+          SilentNightPlayer
+            ( i
+                { playerEvents = [ pef (tf time) ] <> drop 1 i.playerEvents
+                }
+            )
+        }
+    )
+    time
+
+nextMotion :: SilentNightAccumulator -> SilentNightPlayerT -> Either Point Point -> Number -> MakeCanvasT
+nextMotion acc i epp time =
+  makeCanvas
+    ( acc
+        { activity =
+          SilentNightPlayer
+            ( i
+                { playerEvents = [ Motion epp ] <> drop 1 i.playerEvents
+                }
+            )
+        }
+    )
+    time
+
+mouseOrBust :: Maybe Point -> Point
+mouseOrBust = fromMaybe { x: 0.0, y: 0.0 }
+
+riseXP = [ 1.0 / 12.0, 3.0 / 12.0, 5.0 / 12.0, 7.0 / 12.0, 9.0 / 12.0, 11.0 / 12.0 ] :: Array Number
+
+makeCanvas :: SilentNightAccumulator -> Number -> MakeCanvasT
+makeCanvas acc time = do
+  { w, h } <- ask
+  map (over _2 (append (filled (fillColor (rgb 0 0 0)) (rectangle 0.0 0.0 w h)))) (go w h)
   where
-  go = case acc.activity of
+  go :: Number -> Number -> MakeCanvasT
+  go w h = case acc.activity of
     Intro ->
-      if time > instructionFadeOut then
-        makeCanvas (acc { activity = HarmChooser { step: Row1Animation { startsAt: time } } }) ci time
+      if time > instructionDark then
+        makeCanvas (acc { activity = HarmChooser { step: Row1Animation { startsAt: time } } }) time
       else
-        Tuple acc
-          ( text
-              ( font sansSerif
-                  (if time > silentNightDark then 20 else 48)
-                  (if time > silentNightDark then mempty else bold)
+        pure
+          $ Tuple acc
+              ( text
+                  ( font sansSerif
+                      (if time > silentNightDark then 20 else 48)
+                      (if time > silentNightDark then mempty else bold)
+                  )
+                  (w / 2.0 - if time > silentNightDark then 100.0 else 120.0)
+                  (h / 2.0)
+                  (fillColor (whiteRGBA (introOpacity time)))
+                  if time > silentNightDark then "Click on or press the circles" else "Silent Night"
               )
-              (w / 2.0)
-              (h / 2.0)
-              (fillColor (whiteRGBA (introOpacity time)))
-              if time > silentNightDark then "Click on or press three circles" else "Silent Night"
-          )
     HarmChooser { step } -> case step of
       Row1Animation i ->
-        if time > i.startsAt + circleFan then
-          makeCanvas (acc { activity = HarmChooser { step: Row1Choose } }) ci time
+        if time > i.startsAt + circleIntro then
+          makeCanvas (acc { activity = HarmChooser { step: Row1Choose } }) time
         else
-          Tuple acc (circleFanner w (firstRow h) i.startsAt time)
-      Row1Choose -> verseVersionChooser chooseVerseOne w (firstRow h) acc ci time
+          pure $ Tuple acc (circleFanner w (firstRow h) i.startsAt time)
+      Row1Choose -> verseVersionChooser chooseVerseOne w (firstRow h) mempty acc time
       Row2Animation i ->
-        if time > i.startsAt + circleFan then
-          makeCanvas (acc { activity = HarmChooser { step: Row2Choose { verseOne: i.verseOne } } }) ci time
+        if time > i.startsAt + circleIntro then
+          makeCanvas (acc { activity = HarmChooser { step: Row2Choose { verseOne: i.verseOne } } }) time
         else
-          Tuple acc (circleFanner w (secondRow h) i.startsAt time <> circleChoice w (firstRow h) i.verseOne i.startsAt time)
-      Row2Choose i -> verseVersionChooser (chooseVerseTwo i.verseOne) w (secondRow h) acc ci time
+          pure $ Tuple acc (circleFanner w (secondRow h) i.startsAt time <> circleChoice w (firstRow h) i.verseOne i.startsAt time)
+      Row2Choose i -> verseVersionChooser (chooseVerseTwo i.verseOne) w (secondRow h) (circleChosen w (firstRow h) i.verseOne) acc time
       Row3Animation i ->
-        if time > i.startsAt + circleFan then
-          makeCanvas (acc { activity = HarmChooser { step: Row3Choose { verseOne: i.verseOne, verseTwo: i.verseTwo } } }) ci time
+        if time > i.startsAt + circleIntro then
+          makeCanvas (acc { activity = HarmChooser { step: Row3Choose { verseOne: i.verseOne, verseTwo: i.verseTwo } } }) time
         else
-          Tuple acc (circleFanner w (thirdRow h) i.startsAt time <> circleChoice w (secondRow h) i.verseOne i.startsAt time <> circleChosen w (firstRow h) i.verseTwo)
-      Row3Choose i -> verseVersionChooser (chooseVerseThree i.verseOne i.verseTwo) w (thirdRow h) acc ci time
-      FadeOutAnimation i ->
-        if time > i.startsAt + circleFade then
-          makeCanvas (acc { activity = SilentNightPlayer { verse: Verse1, verseOne: i.verseOne, verseTwo: i.verseTwo, verseThree: i.verseThree } }) ci time
-        else
-          Tuple acc
-            ( fold
-                ( map (\vc -> circleOutro Verse1 vc (vc == i.verseOne) w h i.startsAt time) verseChoices
-                    <> map (\vc -> circleOutro Verse2 vc (vc == i.verseTwo) w h i.startsAt time) verseChoices
-                    <> map (\vc -> circleOutro Verse3 vc (vc == i.verseThree) w h i.startsAt time) verseChoices
-                )
+          pure $ Tuple acc (circleFanner w (thirdRow h) i.startsAt time <> circleChoice w (secondRow h) i.verseTwo i.startsAt time <> circleChosen w (firstRow h) i.verseOne)
+      Row3Choose i -> verseVersionChooser (chooseVerseThree i.verseOne i.verseTwo) w (thirdRow h) (circleChosen w (firstRow h) i.verseOne <> circleChosen w (secondRow h) i.verseTwo) acc time
+      FadeOutAnimation i -> do
+        { evts } <- ask
+        if time > i.startsAt + circleFlyAway then
+          makeCanvas
+            ( acc
+                { activity =
+                  SilentNightPlayer
+                    { verse: Verse1
+                    , verseOne: i.verseOne
+                    , verseTwo: i.verseTwo
+                    , verseThree: i.verseThree
+                    , playerEvents: evts
+                    , eventStart: time
+                    }
+                }
             )
-    _ -> Tuple acc mempty
+            time
+        else
+          pure
+            $ Tuple acc
+                ( fold
+                    ( map (\vc -> circleOutro Verse1 vc (vc == i.verseOne) w h i.startsAt time) verseChoices
+                        <> map (\vc -> circleOutro Verse2 vc (vc == i.verseTwo) w h i.startsAt time) verseChoices
+                        <> map (\vc -> circleOutro Verse3 vc (vc == i.verseThree) w h i.startsAt time) verseChoices
+                    )
+                )
+    SilentNightPlayer i -> case head i.playerEvents of
+      Nothing -> pure $ Tuple acc mempty
+      (Just evt) -> case evt of
+        NoEvent dur ->
+          if time > i.eventStart + dur then
+            newCanvas i acc time
+          else
+            pure $ Tuple acc mempty
+        Triangle v ->
+          let
+            sqv = sequence v
 
-scene :: Interactions -> SilentNightAccumulator -> CanvasInfo -> Number -> Behavior (AV D2 SilentNightAccumulator)
-scene inter acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
+            top = V.index v d0
+
+            left = V.index v d1
+
+            right = V.index v d2
+
+            cw = w / 14.0
+
+            twoCw = 2.0 * cw
+
+            nextTriangle = nextObj Triangle
+
+            o
+              | maybe false (\s -> time > standardOutro + foldl max 0.0 s) sqv = newCanvas i acc time
+              | time < i.eventStart + standardIntro =
+                pure
+                  $ ( Tuple acc
+                        $ fold
+                            ( map
+                                ( \pd ->
+                                    let
+                                      pdpi = pd * pi
+                                    in
+                                      filled
+                                        ( fillColor
+                                            (whiteRGBA ((time - i.eventStart) / standardIntro))
+                                        )
+                                        ( circle (sinp w pdpi)
+                                            (cosp h pdpi)
+                                            cw
+                                        )
+                                )
+                                [ 0.0, 2.0 / 3.0, 4.0 / 3.0 ]
+                            )
+                    )
+              | doAction
+                  acc
+                  (sqToRect (sinp w (0.0 * pi)) (cosp h (0.0 * pi)) cw)
+                  && top
+                  == Nothing = nextTriangle acc i (\t -> ((Just t) +> left +> right +> empty)) time
+              | doAction
+                  acc
+                  (sqToRect (sinp w (2.0 * pi / 3.0)) (cosp h (2.0 * pi / 3.0)) cw)
+                  && left
+                  == Nothing = nextTriangle acc i (\t -> (top +> (Just t) +> right +> empty)) time
+              | doAction
+                  acc
+                  (sqToRect (sinp w (4.0 * pi / 3.0)) (cosp h (4.0 * pi / 3.0)) cw)
+                  && right
+                  == Nothing = nextTriangle acc i (\t -> (top +> left +> (Just t) +> empty)) time
+              | otherwise =
+                pure
+                  $ ( Tuple acc
+                        $ fold
+                            ( map
+                                ( \(Tuple pd n) ->
+                                    let
+                                      pdpi = (pd + maybe 0.0 (\s -> (time - foldl max 0.0 s) `pow` 1.6) sqv) * pi
+
+                                      r = case n of
+                                        Nothing -> cw
+                                        Just n' -> pressEffect cw standardPress (time - n')
+                                    in
+                                      filled
+                                        ( fillColor
+                                            ( whiteRGBA
+                                                ( case n of
+                                                    Nothing -> 1.0
+                                                    Just n' -> min 0.4 (1.0 - (0.6 * (time - n') / standardPress))
+                                                )
+                                            )
+                                        )
+                                        ( circle
+                                            (sinp w pdpi)
+                                            (cosp h pdpi)
+                                            r
+                                        )
+                                )
+                                [ Tuple 0.0 top
+                                , Tuple (2.0 / 3.0) left
+                                , Tuple (4.0 / 3.0) right
+                                ]
+                            )
+                    )
+          in
+            o
+        Square v ->
+          let
+            sqv = sequence v
+
+            topLeft = V.index v d0
+
+            topRight = V.index v d1
+
+            bottomLeft = V.index v d2
+
+            bottomRight = V.index v d3
+
+            cw = w / 14.0
+
+            twoCw = 2.0 * cw
+
+            nextSquare = nextObj Square
+
+            o
+              | maybe false (\s -> time > standardOutro + foldl max 0.0 s) sqv = newCanvas i acc time
+              | time < i.eventStart + standardIntro =
+                pure
+                  $ ( Tuple acc
+                        $ fold
+                            ( map
+                                ( \{ x, y } ->
+                                    filled (fillColor (whiteRGBA ((time - i.eventStart) / standardIntro)))
+                                      (circle (x * w) (y * h) cw)
+                                )
+                                [ { x: 0.2, y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.2, y: 0.8 }, { x: 0.8, y: 0.8 } ]
+                            )
+                    )
+              | doAction
+                  acc
+                  (sqToRect 0.2 0.2 cw)
+                  && topLeft
+                  == Nothing = nextSquare acc i (\t -> ((Just t) +> topRight +> bottomLeft +> bottomRight +> empty)) time
+              | doAction
+                  acc
+                  (sqToRect 0.8 0.2 cw)
+                  && topRight
+                  == Nothing = nextSquare acc i (\t -> (topLeft +> (Just t) +> bottomLeft +> bottomRight +> empty)) time
+              | doAction
+                  acc
+                  (sqToRect 0.2 0.8 cw)
+                  && bottomLeft
+                  == Nothing = nextSquare acc i (\t -> (topLeft +> topRight +> (Just t) +> bottomRight +> empty)) time
+              | doAction
+                  acc
+                  (sqToRect 0.8 0.8 cw)
+                  && bottomRight
+                  == Nothing = nextSquare acc i (\t -> (topLeft +> topRight +> bottomLeft +> (Just t) +> empty)) time
+              | otherwise =
+                pure
+                  $ ( Tuple acc
+                        $ fold
+                            ( map
+                                ( \(Tuple { x0, y0, x1, y1 } n) ->
+                                    let
+                                      nowT = maybe 0.0 (\s -> (time - foldl max 0.0 s)) sqv
+
+                                      r = case n of
+                                        Nothing -> cw
+                                        Just n' -> pressEffect cw standardPress (time - n')
+                                    in
+                                      filled
+                                        ( fillColor
+                                            ( whiteRGBA
+                                                ( case n of
+                                                    Nothing -> 1.0
+                                                    Just n' -> min 0.4 (1.0 - (0.6 * (time - n') / standardPress))
+                                                )
+                                            )
+                                        )
+                                        ( circle
+                                            (w * calcSlope 0.0 x0 standardOutro x1 nowT)
+                                            (h * calcSlope 0.0 y0 standardOutro y1 nowT)
+                                            r
+                                        )
+                                )
+                                [ Tuple { x0: 0.2, y0: 0.2, x1: 1.1, y1: 1.1 } topLeft
+                                , Tuple { x0: 0.8, y0: 0.2, x1: -0.1, y1: -0.1 } topRight
+                                , Tuple { x0: 0.2, y0: 0.8, x1: 1.1, y1: 1.1 } bottomLeft
+                                , Tuple { x0: 0.8, y0: 0.8, x1: -0.1, y1: -0.1 } bottomRight
+                                ]
+                            )
+                    )
+          in
+            o
+        Motion lr ->
+          let
+            cw = w / 6.0
+
+            il = isLeft lr
+
+            ir = not il
+
+            xp = (either (\v -> w * v.x) (\v -> (mouseOrBust acc.mousePosition).x - v.x) lr)
+
+            yp = (either (\v -> h * v.y) (\v -> (mouseOrBust acc.mousePosition).y - v.y) lr)
+
+            o
+              | time > i.eventStart + standardIntro + motionNormal + standardOutro = newCanvas i acc time
+              | time < i.eventStart + standardIntro =
+                pure
+                  $ Tuple acc
+                      ( filled
+                          (fillColor (whiteRGBA (min 1.0 $ (time - i.eventStart) / standardIntro)))
+                          (circle xp yp cw)
+                      )
+              | either
+                  ( \v ->
+                      doingAction
+                        acc
+                        (sqToRect xp yp cw)
+                  )
+                  (const false)
+                  lr = nextMotion acc i (Right { x: (mouseOrBust acc.mousePosition).x - xp, y: (mouseOrBust acc.mousePosition).y - yp }) time
+              | either
+                  (const false)
+                  (const $ not acc.inClick)
+                  lr = nextMotion acc i (Left { x: xp, y: yp }) time
+              | otherwise =
+                pure
+                  $ Tuple acc
+                      ( filled
+                          ( fillColor
+                              ( whiteRGBA
+                                  ( if time < i.eventStart + standardIntro + motionNormal then
+                                      1.0
+                                    else
+                                      calcSlope (i.eventStart + standardIntro + motionNormal) 1.0 (i.eventStart + standardIntro + motionNormal + standardOutro) 0.0 time
+                                  )
+                              )
+                          )
+                          (circle xp yp cw)
+                      )
+          in
+            o
+        Rise v ->
+          let
+            one@(Tuple oneN oneS) = V.index v d0
+
+            two@(Tuple twoN twoS) = V.index v d1
+
+            three@(Tuple threeN threeS) = V.index v d2
+
+            four@(Tuple fourN fourS) = V.index v d3
+
+            five@(Tuple fiveN fiveS) = V.index v d4
+
+            six@(Tuple sixN sixS) = V.index v d5
+
+            cw = w / 16.0
+
+            nextRise = nextObj Rise
+
+            twoCw = 2.0 * cw
+
+            tillNormal = i.eventStart + standardIntro + riseNormal
+
+            o
+              | time > tillNormal + standardOutro = newCanvas i acc time
+              | time < i.eventStart + standardIntro =
+                pure
+                  $ Tuple acc
+                      ( fold
+                          ( map
+                              ( \xp ->
+                                  ( filled
+                                      (fillColor (whiteRGBA (min 1.0 $ (time - i.eventStart) / standardIntro)))
+                                      (circle (w * xp) (h * 0.9) cw)
+                                  )
+                              )
+                              riseXP
+                          )
+                      )
+              | isNothing oneS
+                  && doAction
+                      acc
+                      (sqToRect (1.0 * w / 12.0) (oneN * h) cw) = nextRise acc i (\t -> Tuple oneN (Just time) +> two +> three +> four +> five +> six +> empty) time
+              | isNothing twoS
+                  && doAction
+                      acc
+                      (sqToRect (3.0 * w / 12.0) (twoN * h) cw) = nextRise acc i (\t -> one +> Tuple twoN (Just time) +> three +> four +> five +> six +> empty) time
+              | isNothing threeS
+                  && doAction
+                      acc
+                      (sqToRect (5.0 * w / 12.0) (threeN * h) cw) = nextRise acc i (\t -> one +> two +> Tuple threeN (Just time) +> four +> five +> six +> empty) time
+              | isNothing fourS
+                  && doAction
+                      acc
+                      (sqToRect (7.0 * w / 12.0) (fourN * h) cw) = nextRise acc i (\t -> one +> two +> three +> Tuple fourN (Just time) +> five +> six +> empty) time
+              | isNothing fiveS
+                  && doAction
+                      acc
+                      (sqToRect (9.0 * w / 12.0) (fiveN * h) cw) = nextRise acc i (\t -> one +> two +> three +> four +> Tuple fiveN (Just time) +> six +> empty) time
+              | isNothing sixS
+                  && doAction
+                      acc
+                      (sqToRect (11.0 * w / 12.0) (sixN * h) cw) = nextRise acc i (\t -> one +> two +> three +> four +> five +> Tuple sixN (Just time) +> empty) time
+              | otherwise =
+                pure
+                  $ Tuple acc
+                      ( fold
+                          ( map
+                              ( \(Tuple xp stopped) ->
+                                  ( filled
+                                      (fillColor (whiteRGBA 1.0))
+                                      (circle (w * xp) (h * (calcSlope (i.eventStart + standardIntro) 0.9 (tillNormal) 0.1 (fromMaybe (min time tillNormal) stopped))) cw)
+                                  )
+                              )
+                              (zip riseXP [ oneS, twoS, threeS, fourS, fiveS, sixS ])
+                          )
+                      )
+          in
+            o
+        _ -> pure $ Tuple acc mempty
+
+scene :: Interactions -> Array PlayerEvent -> SilentNightAccumulator -> CanvasInfo -> Number -> Behavior (AV D2 SilentNightAccumulator)
+scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
   where
   go p =
     AV
@@ -546,14 +991,39 @@ scene inter acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
               { x: x - ci.boundingClientRect.x, y: y - ci.boundingClientRect.y
               }
           )
-            <$> head p
-        , initiatedClick = (_.id <$> head p) /= acc'.curClickId
-        , curClickId = _.id <$> head p
+            <$> head p.interactions
+        , initiatedClick = (_.id <$> head p.interactions) /= acc'.curClickId
+        , inClick = p.nInteractions /= 0
+        , curClickId = _.id <$> head p.interactions
         }
 
-    (Tuple vizAcc cvs) = makeCanvas acc ci' time
+    (Tuple vizAcc cvs) = runReader (makeCanvas acc time) { evts, w: ci.w, h: ci.h }
 
     players = Nil
+
+riseStart = Tuple 0.0 Nothing :: Tuple Number (Maybe Number)
+
+allPlayerEvent =
+  [ Triangle (fill (const Nothing))
+  , Square (fill (const Nothing))
+  , Motion (Left { x: 0.15, y: 0.15 })
+  , Rise (fill (const riseStart))
+  , Towards
+      ( Left { x: 0.15, y: 0.15 }
+          +> Left { x: 0.85, y: 0.15 }
+          +> Left { x: 0.15, y: 0.85 }
+          +> Left { x: 0.85, y: 0.85 }
+          +> empty
+      )
+  , Explode (ExplodeStage0 Nothing)
+  , Large Nil
+  , Bells (fill (const Nothing))
+  , Tether (Tuple { x: 0.5, y: 0.5 } false)
+  , Gears (fill (const Nothing))
+  , Shrink (fill (const Nothing))
+  , Snow (fill (const Nothing))
+  ] ::
+    Array PlayerEvent
 
 main :: Klank' SilentNightAccumulator
 main =
@@ -561,14 +1031,26 @@ main =
     { run =
       runInBrowser_ do
         inter <- getInteractivity
-        pure $ scene inter
+        (Milliseconds timeNow) <- map unInstant now
+        let
+          evts' = evalGen (shuffle allPlayerEvent) { newSeed: mkSeed (floor timeNow), size: 10 }
+        evts <-
+          sequence
+            $ map
+                ( \i -> do
+                    n <- random
+                    pure [ NoEvent (n * 3.5 + 1.0), i ]
+                )
+                evts'
+        pure $ scene inter (join evts)
     , accumulator =
       \res _ ->
         res
           { initiatedClick: false
           , curClickId: Nothing
           , mousePosition: Nothing
-          , activity: Intro
+          , activity: HarmChooser { step: Row1Animation { startsAt: 0.0 } } -- Intro
+          , inClick: false
           }
     , exporter = defaultExporter
     , buffers =
@@ -579,6 +1061,7 @@ main =
 newtype Interactions
   = Interactions
   { interactions :: Ref.Ref (InteractionOnsets)
+  , nInteractions :: Ref.Ref Int
   , dispose :: Effect Unit
   }
 
@@ -615,41 +1098,62 @@ getInteractivity = do
   let
     mobile = isJust (indexOf (Pattern "iPhone") ua) || isJust (indexOf (Pattern "iPad") ua) || isJust (indexOf (Pattern "Android") ua)
   nInteractions <- Ref.new 0
+  totalInteractions <- Ref.new 0
   interactions <- Ref.new []
   target <- toEventTarget <$> window
   touchStartListener <-
     eventListener \e -> do
       fromEvent e
         # traverse_ \me -> do
-            nt <- Ref.modify (_ + 1) nInteractions
+            void $ Ref.modify (_ + 1) nInteractions
+            nt <- Ref.modify (_ + 1) totalInteractions
             handleTE nt interactions me
-  mouseStartListener <-
+  touchEndListener <-
+    eventListener \e -> do
+      fromEvent e
+        # traverse_ \me -> do
+            void $ Ref.modify (_ - 1) nInteractions
+  mouseDownListener <-
     eventListener \e -> do
       ME.fromEvent e
         # traverse_ \me -> do
-            nt <- Ref.modify (_ + 1) nInteractions
+            void $ Ref.modify (_ + 1) nInteractions
+            nt <- Ref.modify (_ + 1) totalInteractions
             handleME nt interactions me
-  if mobile then addEventListener (wrap "touchstart") touchStartListener false target else addEventListener (wrap "mousedown") mouseStartListener false target
+  mouseUpListener <-
+    eventListener \e -> do
+      ME.fromEvent e
+        # traverse_ \me -> do
+            void $ Ref.modify (_ - 1) nInteractions
+  if mobile then do
+    addEventListener (wrap "touchstart") touchStartListener false target
+    addEventListener (wrap "touchend") touchEndListener false target
+  else do
+    addEventListener (wrap "mousedown") mouseDownListener false target
+    addEventListener (wrap "mouseup") mouseUpListener false target
   let
     dispose =
       if mobile then do
         removeEventListener (wrap "touchstart") touchStartListener false target
+        removeEventListener (wrap "touchend") touchEndListener false target
       else do
-        removeEventListener (wrap "mousedown") mouseStartListener false target
-  pure (Interactions { interactions, dispose })
+        removeEventListener (wrap "mousedown") mouseDownListener false target
+        removeEventListener (wrap "mouseup") mouseUpListener false target
+  pure (Interactions { interactions, nInteractions, dispose })
 
 withInteractions ::
   forall a.
   Interactions ->
   Event a ->
-  Event { value :: a, interactions :: InteractionOnsets }
-withInteractions (Interactions { interactions }) e =
+  Event { value :: a, interactions :: InteractionOnsets, nInteractions :: Int }
+withInteractions (Interactions { interactions, nInteractions }) e =
   makeEvent \k ->
     e
       `subscribe`
         \value -> do
           interactionsValue <- Ref.read interactions
-          k { value, interactions: interactionsValue }
+          nInteractionsValue <- Ref.read nInteractions
+          k { value, interactions: interactionsValue, nInteractions: nInteractionsValue }
 
-interactionLog :: Interactions -> Behavior (InteractionOnsets)
-interactionLog m = behavior \e -> map (\{ value, interactions: bs } -> value bs) (withInteractions m e)
+interactionLog :: Interactions -> Behavior ({ interactions :: InteractionOnsets, nInteractions :: Int })
+interactionLog m = behavior \e -> map (\{ value, interactions, nInteractions } -> value { interactions, nInteractions }) (withInteractions m e)

@@ -7,6 +7,7 @@
   , "drawing"
   , "effect"
   , "psci-support"
+  , "quickcheck"
   , "typelevel-klank-dev"
   , "web-touchevents"
   ]
