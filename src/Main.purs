@@ -5,7 +5,7 @@ import Color (Color, rgb, rgba)
 import Control.Parallel (parallel, sequential)
 import Control.Promise (toAffE)
 import Data.Array (catMaybes, filter, fold, head, range)
-import Data.Either (either)
+import Data.Either (Either, either)
 import Data.Foldable (class Foldable, foldl, traverse_)
 import Data.Int (toNumber)
 import Data.Lens (_2, over)
@@ -17,8 +17,8 @@ import Data.Profunctor (lcmap)
 import Data.String (Pattern(..), indexOf)
 import Data.Traversable (sequence)
 import Data.Tuple (Tuple(..), fst)
-import Data.Typelevel.Num (D2)
-import Data.Vec ((+>), empty)
+import Data.Typelevel.Num (D10, D2, D24, D3, D4, D5, D6)
+import Data.Vec (Vec, empty, (+>))
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), delay, try)
 import Effect.Exception (Error)
@@ -136,10 +136,34 @@ makeBuffersKeepingCache = makeBuffersUsingCache <<< Tuple
 epwf :: Array (Tuple Number Number) -> Number -> AudioParameter
 epwf = evalPiecewise kr
 
+data ExplodeStage
+  = ExplodeStage0 (Maybe Number)
+  | ExplodeStage1 (Vec D4 (Maybe Number))
+
+data Effects
+  = Triangle (Vec D3 (Maybe Number))
+  | Square (Vec D4 (Maybe Number))
+  | Motion Point
+  | Rise (Vec D6 (Tuple Number Boolean)) -- pos, stopped
+  | Towards (Vec D4 (Either Point Number))
+  | Explode ExplodeStage
+  | Large (List (Tuple Point Number)) -- pos, startT
+  | Bells (Vec D24 (Maybe Number))
+  | Tether (Tuple Point Boolean) -- pos, holding
+  | Gears (Vec D5 (Maybe Number))
+  | Shrink (Vec D10 (Maybe Number))
+  | Snow
+  | NoEffect Number -- time
+
 data Activity
   = Intro
   | HarmChooser { step :: HarmChooserStep }
-  | SilentNightPlayer { verse :: Verse, verseOne :: VerseChoice, verseTwo :: VerseChoice, verseThree :: VerseChoice }
+  | SilentNightPlayer
+    { verse :: Verse
+    , verseOne :: VerseChoice
+    , verseTwo :: VerseChoice
+    , verseThree :: VerseChoice
+    }
 
 derive instance eqActivity :: Eq Activity
 
@@ -310,8 +334,10 @@ introOpacity time
 
 circleDivisor = 9.0 :: Number
 
+whiteRGBA = rgba 255 255 255 :: Number -> Color
+
 circles :: Number -> Number -> (VerseChoice -> Number) -> Number -> Drawing
-circles w h opq traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (rgba 0 0 0 (opq i'))) (circle ((2.0 * i + 1.0) * w * traj / 16.0) h ((w / circleDivisor) - (i * 5.0)))) verseChoices)
+circles w h opq traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA (opq i'))) (circle ((2.0 * i + 1.0) * w * traj / 16.0) h ((w / circleDivisor) - (i * 5.0)))) verseChoices)
 
 circleFanner :: Number -> Number -> Number -> Number -> Drawing
 circleFanner w h startsAt time = circles w h (const $ min 1.0 ((time - startsAt) / circleFade)) (min 1.0 ((time - startsAt) / circleFan))
@@ -446,57 +472,58 @@ circleOutro vs vc chosen w h startsAt time =
 
     y = calcSlope 0.0 y0 circleFlyAway y1 (time - startsAt)
   in
-    filled (fillColor (rgba 0 0 0 opq)) (circle x y ((w / circleDivisor) - (i * 5.0)))
+    filled (fillColor (whiteRGBA opq)) (circle x y ((w / circleDivisor) - (i * 5.0)))
 
 makeCanvas :: SilentNightAccumulator -> CanvasInfo -> Number -> (Tuple SilentNightAccumulator Drawing)
-makeCanvas acc ci@(CanvasInfo { w, h }) time = case acc.activity of
-  Intro ->
-    if time > instructionFadeOut then
-      makeCanvas (acc { activity = HarmChooser { step: Row1Animation { startsAt: time } } }) ci time
-    else
-      Tuple acc
-        ( filled (fillColor (rgb 0 0 0)) (rectangle 0.0 0.0 w h)
-            <> text
-                ( font sansSerif
-                    (if time > silentNightDark then 20 else 48)
-                    (if time > silentNightDark then mempty else bold)
-                )
-                (w / 2.0)
-                (h / 2.0)
-                (fillColor (rgba 255 255 255 (introOpacity time)))
-                if time > silentNightDark then "Click on or press three circles" else "Silent Night"
-        )
-  HarmChooser { step } -> case step of
-    Row1Animation i ->
-      if time > i.startsAt + circleFan then
-        makeCanvas (acc { activity = HarmChooser { step: Row1Choose } }) ci time
-      else
-        Tuple acc (circleFanner w (firstRow h) i.startsAt time)
-    Row1Choose -> verseVersionChooser chooseVerseOne w (firstRow h) acc ci time
-    Row2Animation i ->
-      if time > i.startsAt + circleFan then
-        makeCanvas (acc { activity = HarmChooser { step: Row2Choose { verseOne: i.verseOne } } }) ci time
-      else
-        Tuple acc (circleFanner w (secondRow h) i.startsAt time <> circleChoice w (firstRow h) i.verseOne i.startsAt time)
-    Row2Choose i -> verseVersionChooser (chooseVerseTwo i.verseOne) w (secondRow h) acc ci time
-    Row3Animation i ->
-      if time > i.startsAt + circleFan then
-        makeCanvas (acc { activity = HarmChooser { step: Row3Choose { verseOne: i.verseOne, verseTwo: i.verseTwo } } }) ci time
-      else
-        Tuple acc (circleFanner w (thirdRow h) i.startsAt time <> circleChoice w (secondRow h) i.verseOne i.startsAt time <> circleChosen w (firstRow h) i.verseTwo)
-    Row3Choose i -> verseVersionChooser (chooseVerseThree i.verseOne i.verseTwo) w (thirdRow h) acc ci time
-    FadeOutAnimation i ->
-      if time > i.startsAt + circleFade then
-        makeCanvas (acc { activity = SilentNightPlayer { verse: Verse1, verseOne: i.verseOne, verseTwo: i.verseTwo, verseThree: i.verseThree } }) ci time
+makeCanvas acc ci@(CanvasInfo { w, h }) time = over _2 (append (filled (fillColor (rgb 0 0 0)) (rectangle 0.0 0.0 w h))) go
+  where
+  go = case acc.activity of
+    Intro ->
+      if time > instructionFadeOut then
+        makeCanvas (acc { activity = HarmChooser { step: Row1Animation { startsAt: time } } }) ci time
       else
         Tuple acc
-          ( fold
-              ( map (\vc -> circleOutro Verse1 vc (vc == i.verseOne) w h i.startsAt time) verseChoices
-                  <> map (\vc -> circleOutro Verse2 vc (vc == i.verseTwo) w h i.startsAt time) verseChoices
-                  <> map (\vc -> circleOutro Verse3 vc (vc == i.verseThree) w h i.startsAt time) verseChoices
+          ( text
+              ( font sansSerif
+                  (if time > silentNightDark then 20 else 48)
+                  (if time > silentNightDark then mempty else bold)
               )
+              (w / 2.0)
+              (h / 2.0)
+              (fillColor (whiteRGBA (introOpacity time)))
+              if time > silentNightDark then "Click on or press three circles" else "Silent Night"
           )
-  _ -> Tuple acc mempty
+    HarmChooser { step } -> case step of
+      Row1Animation i ->
+        if time > i.startsAt + circleFan then
+          makeCanvas (acc { activity = HarmChooser { step: Row1Choose } }) ci time
+        else
+          Tuple acc (circleFanner w (firstRow h) i.startsAt time)
+      Row1Choose -> verseVersionChooser chooseVerseOne w (firstRow h) acc ci time
+      Row2Animation i ->
+        if time > i.startsAt + circleFan then
+          makeCanvas (acc { activity = HarmChooser { step: Row2Choose { verseOne: i.verseOne } } }) ci time
+        else
+          Tuple acc (circleFanner w (secondRow h) i.startsAt time <> circleChoice w (firstRow h) i.verseOne i.startsAt time)
+      Row2Choose i -> verseVersionChooser (chooseVerseTwo i.verseOne) w (secondRow h) acc ci time
+      Row3Animation i ->
+        if time > i.startsAt + circleFan then
+          makeCanvas (acc { activity = HarmChooser { step: Row3Choose { verseOne: i.verseOne, verseTwo: i.verseTwo } } }) ci time
+        else
+          Tuple acc (circleFanner w (thirdRow h) i.startsAt time <> circleChoice w (secondRow h) i.verseOne i.startsAt time <> circleChosen w (firstRow h) i.verseTwo)
+      Row3Choose i -> verseVersionChooser (chooseVerseThree i.verseOne i.verseTwo) w (thirdRow h) acc ci time
+      FadeOutAnimation i ->
+        if time > i.startsAt + circleFade then
+          makeCanvas (acc { activity = SilentNightPlayer { verse: Verse1, verseOne: i.verseOne, verseTwo: i.verseTwo, verseThree: i.verseThree } }) ci time
+        else
+          Tuple acc
+            ( fold
+                ( map (\vc -> circleOutro Verse1 vc (vc == i.verseOne) w h i.startsAt time) verseChoices
+                    <> map (\vc -> circleOutro Verse2 vc (vc == i.verseTwo) w h i.startsAt time) verseChoices
+                    <> map (\vc -> circleOutro Verse3 vc (vc == i.verseThree) w h i.startsAt time) verseChoices
+                )
+            )
+    _ -> Tuple acc mempty
 
 scene :: Interactions -> SilentNightAccumulator -> CanvasInfo -> Number -> Behavior (AV D2 SilentNightAccumulator)
 scene inter acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
@@ -626,6 +653,3 @@ withInteractions (Interactions { interactions }) e =
 
 interactionLog :: Interactions -> Behavior (InteractionOnsets)
 interactionLog m = behavior \e -> map (\{ value, interactions: bs } -> value bs) (withInteractions m e)
-
--- performance notes
--- - dim on "chan", then cresc on "ted"
