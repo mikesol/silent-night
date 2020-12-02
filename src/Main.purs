@@ -36,12 +36,11 @@ import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, BrowserAudioBuf
 import FRP.Event (Event, makeEvent, subscribe)
 import Foreign.Object as O
 import Graphics.Canvas (Rectangle)
-import Graphics.Drawing (Drawing, Point, circle, fillColor, filled, rectangle, text)
+import Graphics.Drawing (Drawing, Point, arc, circle, clipped, closed, fillColor, filled, lineWidth, outlineColor, outlined, rectangle, text)
 import Graphics.Drawing.Font (FontOptions, bold, font, italic, sansSerif)
 import Math (pow, sin, cos, pi, (%))
 import Random.LCG (mkSeed)
 import Record.Extra (SLProxy(..), SNil)
-import Test.QuickCheck.Gen (evalGen, shuffle)
 import Type.Data.Graph (type (:/))
 import Type.Klank.Dev (Klank', affable, defaultEngineInfo, klank)
 import Web.Event.EventTarget (addEventListener, eventListener, removeEventListener)
@@ -147,23 +146,14 @@ makeBuffersKeepingCache = makeBuffersUsingCache <<< Tuple
 epwf :: Array (Tuple Number Number) -> Number -> AudioParameter
 epwf = evalPiecewise kr
 
-data ExplodeStage
-  = ExplodeStage0 (Maybe Number)
-  | ExplodeStage1 (Vec D4 (Maybe Number))
-
-derive instance eqExplodeStage :: Eq ExplodeStage
-
 data PlayerEvent
   = Triangle (Vec D3 (Maybe Number))
   | Square (Vec D4 (Maybe Number))
   | Motion (Either Point Point) -- resting point or offset from mouse
   | Rise (Vec D6 (Maybe Number)) -- pos, stopped
-  | Towards (Vec D4 (Either Point Number))
-  | Explode ExplodeStage
   | Large (List (Tuple Point Number)) -- pos, startT
-  | Bells (Array (Maybe Number))
-  | Tether (Tuple Point Boolean) -- pos, holding
-  | Gears (Vec D5 (Maybe Number))
+  | Bells (List (List Number))
+  | Gears (Vec D4 (Maybe Number))
   | Shrink (Vec D6 (Maybe Number))
   | Snow (List (Maybe Number)) -- time
   | NoEvent Number -- time
@@ -275,7 +265,7 @@ verseVersionChooser vc w fullH h d acc time
   | doVAction acc w fullH h VersionSix = vc VersionSix acc time
   | doVAction acc w fullH h VersionSeven = vc VersionSeven acc time
   | doVAction acc w fullH h VersionEight = vc VersionEight acc time
-  | otherwise = pure $ Tuple acc (d <> circles w h (const 1.0) 1.0)
+  | otherwise = pure $ Tuple acc (d <> circles fullH w h (const 1.0) 1.0)
 
 data HarmChooserStep
   = Row1Animation { startsAt :: Number }
@@ -373,18 +363,18 @@ pnCurve p n
   | n < 0.5 = ((2.0 * n) `pow` p) / 2.0
   | otherwise = ((((n - 0.5) * 2.0) `pow` (1.0 / p)) / 2.0) + 0.5
 
-circles :: Number -> Number -> (VerseChoice -> Number) -> Number -> Drawing
-circles w h opq traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA (opq i'))) (circle ((2.0 * i * traj + 1.0) * w / 16.0) h (makeCircleDim (min w h) i))) verseChoices)
+circles :: Number -> Number -> Number -> (VerseChoice -> Number) -> Number -> Drawing
+circles fH w h opq traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA (opq i'))) (circle ((2.0 * i * traj + 1.0) * w / 16.0) h (makeCircleDim (min w fH) i))) verseChoices)
 
-circles' :: Number -> Number -> (Number -> Number) -> Drawing
-circles' w h traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA 1.0)) (circle ((2.0 * i + 1.0) * w / 16.0) h (makeCircleDim (min w h) i * (traj i)))) verseChoices)
+circles' :: Number -> Number -> Number -> (Number -> Number) -> Drawing
+circles' fH w h traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA 1.0)) (circle ((2.0 * i + 1.0) * w / 16.0) h (makeCircleDim (min w fH) i * (traj i)))) verseChoices)
 
-circleFanner :: Number -> Number -> Number -> Number -> Drawing
-circleFanner w h startsAt time =
+circleFanner :: Number -> Number -> Number -> Number -> Number -> Drawing
+circleFanner fH w h startsAt time =
   let
     nTime = time - startsAt
   in
-    circles' w h
+    circles' fH w h
       ( \i ->
           let
             st = (pnCurve 0.7 $ i / 10.0) * circleIntro
@@ -399,8 +389,8 @@ circleFanner w h startsAt time =
             x
       )
 
-circleChoice :: Number -> Number -> VerseChoice -> Number -> Number -> Drawing
-circleChoice w h vc startsAt time = circles w h (\v -> if v == vc then 1.0 else max 0.3 (1.0 - (time - startsAt) / (0.7 * circleFade))) 1.0
+circleChoice :: Number -> Number -> Number -> VerseChoice -> Number -> Number -> Drawing
+circleChoice fH w h vc startsAt time = circles fH w h (\v -> if v == vc then 1.0 else max 0.3 (1.0 - (time - startsAt) / (0.7 * circleFade))) 1.0
 
 firstRow :: Number -> Number
 firstRow h = h / 6.0
@@ -411,8 +401,8 @@ secondRow h = 3.0 * h / 6.0
 thirdRow :: Number -> Number
 thirdRow h = 5.0 * h / 6.0
 
-circleChosen :: Number -> Number -> VerseChoice -> Drawing
-circleChosen w h vc = circles w h (\v -> if v == vc then 1.0 else 0.3) 1.0
+circleChosen :: Number -> Number -> Number -> VerseChoice -> Drawing
+circleChosen fH w h vc = circles fH w h (\v -> if v == vc then 1.0 else 0.3) 1.0
 
 circleOutroStart :: Number -> Number -> Verse -> VerseChoice -> Tuple Number Number
 circleOutroStart w h Verse1 VersionOne = Tuple (1.0 * w / 16.0) (firstRow h)
@@ -534,21 +524,25 @@ circleOutro vs vc chosen w h startsAt time =
 type MakeCanvasT
   = Reader { evts :: Array PlayerEvent, w :: Number, h :: Number } (Tuple SilentNightAccumulator Drawing)
 
-standardIntro = 1.0 :: Number
+standardIntro = 1.4 :: Number
 
-standardOutro = 3.0 :: Number
+standardOutro = 4.0 :: Number
 
 standardPress = 0.5 :: Number
 
 motionNormal = 8.0 :: Number
 
-riseNormal = 4.0 :: Number
+bellsNormal = 10.0 :: Number
 
-snowMin = 4.0 :: Number
+riseNormal = 8.0 :: Number
 
-snowMax = 15.0 :: Number
+snowMin = 6.0 :: Number
+
+snowMax = 20.0 :: Number
 
 snowDiff = snowMax - snowMin :: Number
+
+largeCrossing = 25.0 :: Number
 
 snowYp :: Number -> Number -> Number -> Number
 snowYp h nowT v = h * (min 1.1 $ calcSlope 0.0 (-0.1) (snowMin + (v * snowDiff)) (1.1) nowT)
@@ -696,10 +690,94 @@ snowRecurser i w h acc startT time l = go 0 Nil (if acc.inClick then l else Nil)
     else
       go (z + 1) (hd <> pure a) b
 
+bellsInternal = standardIntro + bellsNormal :: Number
+
+bellsFaded = bellsInternal + standardOutro :: Number
+
+bellsRecurser :: SilentNightPlayerT -> Number -> Number -> SilentNightAccumulator -> Number -> Number -> List (List Number) -> MakeCanvasT
+bellsRecurser i w h acc startT time l = go 0 Nil (if acc.inClick then l else Nil)
+  where
+  op = max 0.0 (min 1.0 (calcSlope (i.eventStart + bellsInternal) 1.0 (i.eventStart + bellsFaded) 0.0 time))
+
+  notNow Nil = true
+
+  notNow (a : b) = a /= time
+
+  go z hd Nil =
+    pure
+      $ Tuple acc
+          ( makeBells w h
+              ( map
+                  ( \tl ->
+                      Tuple
+                        ( case tl of
+                            Nil -> 1.0
+                            (a : b) -> if time - a < 0.25 then (calcSlope a 1.0 (a + 0.25) 1.13 time) else if time - a < 0.5 then (calcSlope (a + 0.25) 1.13 (a + 0.5) 1.0 time) else 1.0
+                        )
+                        op
+                  )
+                  (A.fromFoldable l)
+              )
+          )
+
+  go z hd (a : b) =
+    if notNow a
+      && doAction
+          acc
+          (sqToRect (bellX z * w) (bellY z * h) ((min w h) / 24.0)) then
+      makeCanvas
+        ( acc
+            { activity =
+              SilentNightPlayer
+                ( i
+                    { playerEvents = [ Bells (hd <> (pure $ time : a) <> b) ] <> drop 1 i.playerEvents
+                    }
+                )
+            }
+        )
+        time
+    else
+      go (z + 1) (hd <> pure a) b
+
+bellX :: Int -> Number
+bellX i = ((toNumber (i `mod` 6)) * 2.0 + 1.0) / 12.0
+
+bellY :: Int -> Number
+bellY i = ((toNumber (i `div` 6)) * 2.0 + 1.0) / 8.0
+
+-- sizeMult opacity
+makeBells :: Number -> Number -> Array (Tuple Number Number) -> Drawing
+makeBells w h a =
+  fold
+    ( A.mapWithIndex
+        ( \i (Tuple sizeM op) ->
+            filled (fillColor (whiteRGBA op))
+              (circle (bellX i * w) (bellY i * h) (sizeM * (min w h) / 24.0))
+        )
+        a
+    )
+
+isLarge :: SilentNightAccumulator -> Boolean
+isLarge { activity: SilentNightPlayer { playerEvents } } =
+  maybe false
+    ( \v -> case v of
+        Large _ -> true
+        _ -> false
+    )
+    $ head playerEvents
+
+isLarge _ = false
+
 makeCanvas :: SilentNightAccumulator -> Number -> MakeCanvasT
 makeCanvas acc time = do
   { w, h } <- ask
-  map (over _2 (append (filled (fillColor (rgb 0 0 0)) (rectangle 0.0 0.0 w h) <> (fold (map (\f -> f w h time) starFs))))) (go w h)
+  let
+    bg = filled (fillColor (rgb 0 0 0)) (rectangle 0.0 0.0 w h)
+
+    starscape = fold (map (\f -> f w h time) starFs)
+  map
+    (over _2 (\i -> if isLarge acc then bg <> i <> starscape else bg <> starscape <> i))
+    (go w h)
   where
   dAcc = doAction acc
 
@@ -726,20 +804,20 @@ makeCanvas acc time = do
         if time > i.startsAt + circleIntro then
           makeCanvas (acc { activity = HarmChooser { step: Row1Choose } }) time
         else
-          pure $ Tuple acc (circleFanner w (firstRow h) i.startsAt time)
+          pure $ Tuple acc (circleFanner h w (firstRow h) i.startsAt time)
       Row1Choose -> verseVersionChooser chooseVerseOne w h (firstRow h) mempty acc time
       Row2Animation i ->
         if time > i.startsAt + circleIntro then
           makeCanvas (acc { activity = HarmChooser { step: Row2Choose { verseOne: i.verseOne } } }) time
         else
-          pure $ Tuple acc (circleFanner w (secondRow h) i.startsAt time <> circleChoice w (firstRow h) i.verseOne i.startsAt time)
-      Row2Choose i -> verseVersionChooser (chooseVerseTwo i.verseOne) w h (secondRow h) (circleChosen w (firstRow h) i.verseOne) acc time
+          pure $ Tuple acc (circleFanner h w (secondRow h) i.startsAt time <> circleChoice h w (firstRow h) i.verseOne i.startsAt time)
+      Row2Choose i -> verseVersionChooser (chooseVerseTwo i.verseOne) w h (secondRow h) (circleChosen h w (firstRow h) i.verseOne) acc time
       Row3Animation i ->
         if time > i.startsAt + circleIntro then
           makeCanvas (acc { activity = HarmChooser { step: Row3Choose { verseOne: i.verseOne, verseTwo: i.verseTwo } } }) time
         else
-          pure $ Tuple acc (circleFanner w (thirdRow h) i.startsAt time <> circleChoice w (secondRow h) i.verseTwo i.startsAt time <> circleChosen w (firstRow h) i.verseOne)
-      Row3Choose i -> verseVersionChooser (chooseVerseThree i.verseOne i.verseTwo) w h (thirdRow h) (circleChosen w (firstRow h) i.verseOne <> circleChosen w (secondRow h) i.verseTwo) acc time
+          pure $ Tuple acc (circleFanner h w (thirdRow h) i.startsAt time <> circleChoice h w (secondRow h) i.verseTwo i.startsAt time <> circleChosen h w (firstRow h) i.verseOne)
+      Row3Choose i -> verseVersionChooser (chooseVerseThree i.verseOne i.verseTwo) w h (thirdRow h) (circleChosen h w (firstRow h) i.verseOne <> circleChosen h w (secondRow h) i.verseTwo) acc time
       FadeOutAnimation i -> do
         { evts } <- ask
         if time > i.startsAt + circleFlyAway then
@@ -946,6 +1024,111 @@ makeCanvas acc time = do
                                 , Tuple { x0: c2, y0: c1, x1: -0.1, y1: 1.1 } topRight
                                 , Tuple { x0: c1, y0: c2, x1: 1.1, y1: -0.1 } bottomLeft
                                 , Tuple { x0: c2, y0: c2, x1: -0.1, y1: -0.1 } bottomRight
+                                ]
+                            )
+                    )
+          in
+            o
+        Gears v ->
+          let
+            sqv = sequence v
+
+            gear0 = V.index v d0
+
+            gear1 = V.index v d1
+
+            gear2 = V.index v d2
+
+            gear3 = V.index v d3
+
+            cw = (min w h) / 17.0
+
+            cw0 = cw
+
+            cw1 = cw0 + (w * 0.05)
+
+            cw2 = cw1 + (w * 0.05)
+
+            cw3 = cw2 + (w * 0.05)
+
+            cg0 = 0.0
+
+            cg1 = 0.3 * pi
+
+            cg2 = 0.9 * pi
+
+            cg3 = 1.8 * pi
+
+            pythag x y = ((x `pow` 2.0) + (y `pow` 2.0)) `pow` 0.5
+
+            nextGear = nextObj Gears
+
+            dArc cc =
+              acc.initiatedClick
+                && ( maybe false
+                      ( \{ x, y } ->
+                          if x == 0.0 && y == 0.0 then
+                            false
+                          else
+                            ( let
+                                hyp = pythag (x - w / 2.0) (y - h / 2.0)
+
+                                lb = cc - (w * 0.025)
+
+                                ub = cc + (w * 0.025)
+                              in
+                                hyp >= lb && hyp <= ub
+                            )
+                      )
+                      acc.mousePosition
+                  )
+
+            gear2arc opq mcw gp =
+              outlined (outlineColor (whiteRGBA opq) <> lineWidth (w * 0.05))
+                (arc (w / 2.0) (h / 2.0) gp (gp + (calcSlope 0.0 1.0 w 2.0 mcw * pi)) mcw)
+
+            o
+              | maybe false (\s -> time > standardOutro + foldl max 0.0 s) sqv = newCanvas i acc time
+              | time < i.eventStart + standardIntro =
+                pure
+                  $ ( Tuple acc
+                        $ fold
+                            ( map
+                                (\(Tuple mcw gs) -> gear2arc ((time - i.eventStart) / standardIntro) mcw gs)
+                                [ Tuple cw0 cg0, Tuple cw1 cg1, Tuple cw2 cg2, Tuple cw3 cg3 ]
+                            )
+                    )
+              | gear0
+                  == Nothing
+                  && dArc cw0 = nextGear acc i (\t -> ((Just t) +> gear1 +> gear2 +> gear3 +> empty)) time
+              | gear1
+                  == Nothing
+                  && dArc cw1 = nextGear acc i (\t -> (gear0 +> (Just t) +> gear2 +> gear3 +> empty)) time
+              | gear2
+                  == Nothing
+                  && dArc cw2 = nextGear acc i (\t -> (gear0 +> gear1 +> (Just t) +> gear3 +> empty)) time
+              | gear3
+                  == Nothing
+                  && dArc cw3 = nextGear acc i (\t -> (gear0 +> gear1 +> gear2 +> (Just t) +> empty)) time
+              | otherwise =
+                pure
+                  $ ( Tuple acc
+                        $ fold
+                            ( map
+                                ( \(Tuple (Tuple mcw gp) n) ->
+                                    let
+                                      nowT = maybe 0.0 (\s -> (time - foldl max 0.0 s)) sqv
+                                    in
+                                      gear2arc (maybe 1.0 (\s -> let mx = foldl max 0.0 s in calcSlope mx 1.0 (mx + standardOutro) 0.0 time) sqv) mcw
+                                        ( case n of
+                                            Nothing -> gp
+                                            Just n' -> gp + (time - n')
+                                        )
+                                )
+                                [ Tuple (Tuple cw0 cg0) gear0
+                                , Tuple (Tuple cw1 cg1) gear1
+                                , Tuple (Tuple cw2 cg2) gear2
+                                , Tuple (Tuple cw3 cg3) gear3
                                 ]
                             )
                     )
@@ -1213,7 +1396,53 @@ makeCanvas acc time = do
               | otherwise = snowRecurser i w h acc stTime time a
           in
             o
-        _ -> pure $ Tuple acc mempty
+        Bells a ->
+          let
+            stTime = i.eventStart
+
+            nowT = time - stTime
+
+            o
+              | time > i.eventStart + standardIntro + bellsNormal + standardOutro = newCanvas i acc time
+              | time < i.eventStart + standardIntro =
+                pure
+                  $ Tuple acc
+                      ( makeBells w h (A.replicate 24 (Tuple 1.0 (min 1.0 $ (time - i.eventStart) / standardIntro)))
+                      )
+              | otherwise = bellsRecurser i w h acc stTime time a
+          in
+            o
+        Large v ->
+          let
+            cw = h / 1.2
+
+            cst = 0.0 - cw - 10.0
+
+            ced = w + cw + 1.0
+
+            spn = ced - cst
+
+            cpos = calcSlope 0.0 cst 1.0 ced (pnCurve 1.4 $ (time - i.eventStart) / largeCrossing)
+
+            newV = maybe v (\mp -> if acc.initiatedClick then (Tuple mp time) : v else v) acc.mousePosition
+
+            o
+              | time > i.eventStart + largeCrossing + standardOutro = newCanvas i acc time
+              | otherwise =
+                pure
+                  $ Tuple
+                      ( acc
+                          { activity =
+                            SilentNightPlayer
+                              ( i
+                                  { playerEvents = [ Large newV ] <> drop 1 i.playerEvents
+                                  }
+                              )
+                          }
+                      )
+                      (filled (fillColor $ rgb 255 255 255) (circle cpos (h / 2.0) cw) <> fold (map (\(Tuple { x, y } tm) -> filled (fillColor $ rgb 0 0 0) (circle (calcSlope tm x (tm + largeCrossing) (x + spn) time) y ((min w h) * (min 0.3 $ 0.03 * (time - tm))))) newV))
+          in
+            o
 
 scene :: Interactions -> Array PlayerEvent -> SilentNightAccumulator -> CanvasInfo -> Number -> Behavior (AV D2 SilentNightAccumulator)
 scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
@@ -1251,17 +1480,8 @@ allPlayerEvent =
   , Square (fill (const Nothing))
   , Motion (Left { x: 0.18, y: 0.18 })
   , Rise (fill (const Nothing))
-  , Towards
-      ( Left { x: 0.15, y: 0.15 }
-          +> Left { x: 0.85, y: 0.15 }
-          +> Left { x: 0.15, y: 0.85 }
-          +> Left { x: 0.85, y: 0.85 }
-          +> empty
-      )
-  , Explode (ExplodeStage0 Nothing)
   , Large Nil
-  , Bells (A.replicate 24 Nothing)
-  , Tether (Tuple { x: 0.5, y: 0.5 } false)
+  , Bells (L.fromFoldable $ A.replicate 24 Nil)
   , Gears (fill (const Nothing))
   , Shrink (fill (const Nothing))
   , Snow (L.fromFoldable $ A.replicate snowL Nothing)
@@ -1295,6 +1515,25 @@ acG = acx [ Snow (L.fromFoldable $ A.replicate snowL Nothing), Motion (Left { x:
 
 acH = acx [ Shrink (fill $ const Nothing), Square (fill $ const Nothing) ] :: Activity
 
+acI = acx [ Bells (L.fromFoldable $ A.replicate 24 Nil), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+
+acJ = acx [ Large Nil, Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+
+acK = acx [ Gears (fill $ const Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+
+shuffle :: forall a. Array a -> Effect (Array a)
+shuffle x = go 0 x
+  where
+  l = A.length x
+
+  go 100 a = pure a
+
+  go z a = do
+    rd <- random
+    let
+      idx = floor (toNumber l * rd)
+    go (z + 1) (A.drop idx a <> A.take idx a)
+
 main :: Klank' SilentNightAccumulator
 main =
   klank
@@ -1302,14 +1541,13 @@ main =
       runInBrowser_ do
         inter <- getInteractivity
         (Milliseconds timeNow) <- map unInstant now
-        let
-          evts' = evalGen (shuffle allPlayerEvent) { newSeed: mkSeed (floor timeNow), size: 10 }
+        evts' <- shuffle allPlayerEvent
         evts <-
           sequence
             $ map
                 ( \i -> do
                     n <- random
-                    pure [ NoEvent (n * 3.5 + 1.0), i ]
+                    pure [ NoEvent (n * 5.0 + 2.0), i ]
                 )
                 evts'
         pure $ scene inter (join evts)
@@ -1319,7 +1557,7 @@ main =
           { initiatedClick: false
           , curClickId: Nothing
           , mousePosition: Nothing
-          , activity: acH
+          , activity: acA
           , inClick: false
           }
     , exporter = defaultExporter
