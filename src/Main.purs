@@ -6,12 +6,14 @@ import Control.Monad.Reader (Reader, ask, runReader)
 import Control.Parallel (parallel, sequential)
 import Control.Promise (toAffE)
 import Data.Array (catMaybes, drop, filter, fold, head, range, zip)
+import Data.Array as A
 import Data.DateTime.Instant (Instant, unInstant)
 import Data.Either (Either(..), either, isLeft)
 import Data.Foldable (class Foldable, foldl, traverse_)
 import Data.Int (floor, toNumber)
 import Data.Lens (_2, over)
 import Data.List (List(..), (:))
+import Data.List as L
 import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe, maybe')
 import Data.Newtype (wrap)
 import Data.NonEmpty (NonEmpty, (:|))
@@ -19,7 +21,8 @@ import Data.Profunctor (lcmap)
 import Data.String (Pattern(..), indexOf)
 import Data.Traversable (sequence)
 import Data.Tuple (Tuple(..), fst)
-import Data.Typelevel.Num (class Nat, D10, D2, D24, D3, D4, D42, D5, D6, d0, d1, d2, d3, d4, d5)
+import Data.Typelevel.Num (class Lt, class Nat, class Pos, D0, D10, D2, D24, D3, D4, D5, D6, d0, d1, d2, d3, d4, d5)
+import Data.Typelevel.Num as TLN
 import Data.Vec (Vec, empty, fill, (+>))
 import Data.Vec as V
 import Effect (Effect)
@@ -43,6 +46,7 @@ import Type.Data.Graph (type (:/))
 import Type.Klank.Dev (Klank', affable, defaultEngineInfo, klank)
 import Web.Event.EventTarget (addEventListener, eventListener, removeEventListener)
 import Web.HTML (window)
+import Web.HTML.Event.EventTypes (offline)
 import Web.HTML.Navigator (userAgent)
 import Web.HTML.Window (navigator, toEventTarget)
 import Web.TouchEvent.Touch as T
@@ -152,16 +156,16 @@ derive instance eqExplodeStage :: Eq ExplodeStage
 data PlayerEvent
   = Triangle (Vec D3 (Maybe Number))
   | Square (Vec D4 (Maybe Number))
-  | Motion (Maybe Point) -- resting point or offset from mouse
-  | Rise (Vec D6 (Tuple Number (Maybe Number))) -- pos, stopped
+  | Motion (Either Point Point) -- resting point or offset from mouse
+  | Rise (Vec D6 (Maybe Number)) -- pos, stopped
   | Towards (Vec D4 (Either Point Number))
   | Explode ExplodeStage
   | Large (List (Tuple Point Number)) -- pos, startT
-  | Bells (Vec D24 (Maybe Number))
+  | Bells (Array (Maybe Number))
   | Tether (Tuple Point Boolean) -- pos, holding
   | Gears (Vec D5 (Maybe Number))
-  | Shrink (Vec D10 (Maybe Number))
-  | Snow (Vec D42 (Maybe Number))
+  | Shrink (Vec D6 (Maybe Number))
+  | Snow (List (Maybe Number)) -- time
   | NoEvent Number -- time
 
 derive instance eqPlayerEvent :: Eq PlayerEvent
@@ -242,12 +246,12 @@ chooseVerseThree v1 v2 vc acc time = makeCanvas (acc { activity = HarmChooser { 
 makeCircleDim :: Number -> Number -> Number
 makeCircleDim w i = calcSlope 0.0 (w / circleDivisor) 7.0 (w / (circleDivisor * 2.0)) i
 
-doVAction :: SilentNightAccumulator -> Number -> Number -> VerseChoice -> Boolean
-doVAction acc w h vc =
+doVAction :: SilentNightAccumulator -> Number -> Number -> Number -> VerseChoice -> Boolean
+doVAction acc w fullH h vc =
   let
     i = (toNumber <<< versionToInt) vc
 
-    dim = makeCircleDim w i
+    dim = makeCircleDim (min w fullH) i
 
     twoDim = 2.0 * dim
 
@@ -261,16 +265,16 @@ doVAction acc w h vc =
   in
     out
 
-verseVersionChooser :: (VerseChoice -> SilentNightAccumulator -> Number -> MakeCanvasT) -> Number -> Number -> Drawing -> SilentNightAccumulator -> Number -> MakeCanvasT
-verseVersionChooser vc w h d acc time
-  | doVAction acc w h VersionOne = vc VersionOne acc time
-  | doVAction acc w h VersionTwo = vc VersionTwo acc time
-  | doVAction acc w h VersionThree = vc VersionThree acc time
-  | doVAction acc w h VersionFour = vc VersionFour acc time
-  | doVAction acc w h VersionFive = vc VersionFive acc time
-  | doVAction acc w h VersionSix = vc VersionSix acc time
-  | doVAction acc w h VersionSeven = vc VersionSeven acc time
-  | doVAction acc w h VersionEight = vc VersionEight acc time
+verseVersionChooser :: (VerseChoice -> SilentNightAccumulator -> Number -> MakeCanvasT) -> Number -> Number -> Number -> Drawing -> SilentNightAccumulator -> Number -> MakeCanvasT
+verseVersionChooser vc w fullH h d acc time
+  | doVAction acc w fullH h VersionOne = vc VersionOne acc time
+  | doVAction acc w fullH h VersionTwo = vc VersionTwo acc time
+  | doVAction acc w fullH h VersionThree = vc VersionThree acc time
+  | doVAction acc w fullH h VersionFour = vc VersionFour acc time
+  | doVAction acc w fullH h VersionFive = vc VersionFive acc time
+  | doVAction acc w fullH h VersionSix = vc VersionSix acc time
+  | doVAction acc w fullH h VersionSeven = vc VersionSeven acc time
+  | doVAction acc w fullH h VersionEight = vc VersionEight acc time
   | otherwise = pure $ Tuple acc (d <> circles w h (const 1.0) 1.0)
 
 data HarmChooserStep
@@ -370,10 +374,10 @@ pnCurve p n
   | otherwise = ((((n - 0.5) * 2.0) `pow` (1.0 / p)) / 2.0) + 0.5
 
 circles :: Number -> Number -> (VerseChoice -> Number) -> Number -> Drawing
-circles w h opq traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA (opq i'))) (circle ((2.0 * i * traj + 1.0) * w / 16.0) h (makeCircleDim w i))) verseChoices)
+circles w h opq traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA (opq i'))) (circle ((2.0 * i * traj + 1.0) * w / 16.0) h (makeCircleDim (min w h) i))) verseChoices)
 
 circles' :: Number -> Number -> (Number -> Number) -> Drawing
-circles' w h traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA 1.0)) (circle ((2.0 * i + 1.0) * w / 16.0) h (makeCircleDim w i * (traj i)))) verseChoices)
+circles' w h traj = fold (map (\i' -> let i = (toNumber <<< versionToInt) i' in filled (fillColor (whiteRGBA 1.0)) (circle ((2.0 * i + 1.0) * w / 16.0) h (makeCircleDim (min w h) i * (traj i)))) verseChoices)
 
 circleFanner :: Number -> Number -> Number -> Number -> Drawing
 circleFanner w h startsAt time =
@@ -525,7 +529,7 @@ circleOutro vs vc chosen w h startsAt time =
 
     y = calcSlope 0.0 y0 1.0 y1 (pnCurve 0.8 $ (time - startsAt) / circleFlyAway)
   in
-    filled (fillColor (whiteRGBA opq)) (circle x y (makeCircleDim w i))
+    filled (fillColor (whiteRGBA opq)) (circle x y (makeCircleDim (min w h) i))
 
 type MakeCanvasT
   = Reader { evts :: Array PlayerEvent, w :: Number, h :: Number } (Tuple SilentNightAccumulator Drawing)
@@ -536,9 +540,24 @@ standardOutro = 3.0 :: Number
 
 standardPress = 0.5 :: Number
 
-motionNormal = 5.0 :: Number
+motionNormal = 8.0 :: Number
 
 riseNormal = 4.0 :: Number
+
+snowMin = 4.0 :: Number
+
+snowMax = 15.0 :: Number
+
+snowDiff = snowMax - snowMin :: Number
+
+snowYp :: Number -> Number -> Number -> Number
+snowYp h nowT v = h * (min 1.1 $ calcSlope 0.0 (-0.1) (snowMin + (v * snowDiff)) (1.1) nowT)
+
+snowXp :: Number -> Number -> Number
+snowXp w v = w * v
+
+snowRad :: Number -> Number -> Number -> Number
+snowRad w h v = (min w h) * 0.05 * v
 
 pressEffect :: Number -> Number -> Number -> Number
 pressEffect cw press time
@@ -584,7 +603,7 @@ nextObj pef acc i tf time =
     )
     time
 
-nextMotion :: SilentNightAccumulator -> SilentNightPlayerT -> Maybe Point -> Number -> MakeCanvasT
+nextMotion :: SilentNightAccumulator -> SilentNightPlayerT -> Either Point Point -> Number -> MakeCanvasT
 nextMotion acc i epp time =
   makeCanvas
     ( acc
@@ -603,11 +622,87 @@ mouseOrBust = fromMaybe { x: 0.0, y: 0.0 }
 
 riseXP = [ 1.0 / 12.0, 3.0 / 12.0, 5.0 / 12.0, 7.0 / 12.0, 9.0 / 12.0, 11.0 / 12.0 ] :: Array Number
 
+eix :: Number -> SilentNightAccumulator -> Either Point Point -> Number
+eix w acc = either (\v -> w * v.x) (\v -> (mouseOrBust acc.mousePosition).x - v.x)
+
+eiy :: Number -> SilentNightAccumulator -> Either Point Point -> Number
+eiy h acc = either (\v -> h * v.y) (\v -> (mouseOrBust acc.mousePosition).y - v.y)
+
+nothingize :: forall a. a -> Maybe a
+nothingize = const Nothing
+
+needsToFollow :: forall a b. Number -> Number -> Number -> SilentNightAccumulator -> Either a b -> Boolean
+needsToFollow xp yp cw acc =
+  either
+    ( \_ ->
+        doingAction
+          acc
+          (sqToRect xp yp cw)
+    )
+    (const false)
+
+needsToStopFollowing :: forall a b. SilentNightAccumulator -> Either a b -> Boolean
+needsToStopFollowing acc =
+  either
+    (const false)
+    (const $ not acc.inClick)
+
+bFoldL :: forall a. (Int -> a -> Boolean) -> List a -> Boolean
+bFoldL f l = go 0 l
+  where
+  go _ Nil = false
+
+  go x (a : b) = if f x a then true else go (x + 1) b
+
+snowRecurser :: SilentNightPlayerT -> Number -> Number -> SilentNightAccumulator -> Number -> Number -> List (Maybe Number) -> MakeCanvasT
+snowRecurser i w h acc startT time l = go 0 Nil (if acc.inClick then l else Nil)
+  where
+  go z hd Nil =
+    pure
+      $ Tuple acc
+          ( fold
+              ( map
+                  ( \(Tuple (SnowI xrd yrd rrd) mn) ->
+                      if mn == Nothing then
+                        filled (fillColor (whiteRGBA 1.0))
+                          (circle (snowXp w xrd) (snowYp h (time - startT) yrd) (snowRad w h rrd))
+                      else
+                        mempty
+                  )
+                  (A.zipWith Tuple snows (A.fromFoldable l))
+              )
+          )
+
+  go z hd (a : b) =
+    if a == Nothing
+      && maybe false
+          ( \(SnowI xrd yrd rrd) ->
+              doAction
+                acc
+                (sqToRect (snowXp w xrd) (snowYp h (time - startT) yrd) (snowRad w h rrd))
+          )
+          (A.index snows z) then
+      makeCanvas
+        ( acc
+            { activity =
+              SilentNightPlayer
+                ( i
+                    { playerEvents = [ Snow (hd <> (pure $ Just time) <> b) ] <> drop 1 i.playerEvents
+                    }
+                )
+            }
+        )
+        time
+    else
+      go (z + 1) (hd <> pure a) b
+
 makeCanvas :: SilentNightAccumulator -> Number -> MakeCanvasT
 makeCanvas acc time = do
   { w, h } <- ask
   map (over _2 (append (filled (fillColor (rgb 0 0 0)) (rectangle 0.0 0.0 w h) <> (fold (map (\f -> f w h time) starFs))))) (go w h)
   where
+  dAcc = doAction acc
+
   go :: Number -> Number -> MakeCanvasT
   go w h = case acc.activity of
     Intro ->
@@ -632,19 +727,19 @@ makeCanvas acc time = do
           makeCanvas (acc { activity = HarmChooser { step: Row1Choose } }) time
         else
           pure $ Tuple acc (circleFanner w (firstRow h) i.startsAt time)
-      Row1Choose -> verseVersionChooser chooseVerseOne w (firstRow h) mempty acc time
+      Row1Choose -> verseVersionChooser chooseVerseOne w h (firstRow h) mempty acc time
       Row2Animation i ->
         if time > i.startsAt + circleIntro then
           makeCanvas (acc { activity = HarmChooser { step: Row2Choose { verseOne: i.verseOne } } }) time
         else
           pure $ Tuple acc (circleFanner w (secondRow h) i.startsAt time <> circleChoice w (firstRow h) i.verseOne i.startsAt time)
-      Row2Choose i -> verseVersionChooser (chooseVerseTwo i.verseOne) w (secondRow h) (circleChosen w (firstRow h) i.verseOne) acc time
+      Row2Choose i -> verseVersionChooser (chooseVerseTwo i.verseOne) w h (secondRow h) (circleChosen w (firstRow h) i.verseOne) acc time
       Row3Animation i ->
         if time > i.startsAt + circleIntro then
           makeCanvas (acc { activity = HarmChooser { step: Row3Choose { verseOne: i.verseOne, verseTwo: i.verseTwo } } }) time
         else
           pure $ Tuple acc (circleFanner w (thirdRow h) i.startsAt time <> circleChoice w (secondRow h) i.verseTwo i.startsAt time <> circleChosen w (firstRow h) i.verseOne)
-      Row3Choose i -> verseVersionChooser (chooseVerseThree i.verseOne i.verseTwo) w (thirdRow h) (circleChosen w (firstRow h) i.verseOne <> circleChosen w (secondRow h) i.verseTwo) acc time
+      Row3Choose i -> verseVersionChooser (chooseVerseThree i.verseOne i.verseTwo) w h (thirdRow h) (circleChosen w (firstRow h) i.verseOne <> circleChosen w (secondRow h) i.verseTwo) acc time
       FadeOutAnimation i -> do
         { evts } <- ask
         if time > i.startsAt + circleFlyAway then
@@ -689,7 +784,7 @@ makeCanvas acc time = do
 
             right = V.index v d2
 
-            cw = w / 16.0
+            cw = (min w h) / 16.0
 
             twoCw = 2.0 * cw
 
@@ -721,18 +816,15 @@ makeCanvas acc time = do
                     )
               | top
                   == Nothing
-                  && doAction
-                      acc
+                  && dAcc
                       (sqToRect (sinp w (0.0 * pi)) (cosp h (0.0 * pi)) cw) = nextTriangle acc i (\t -> ((Just t) +> left +> right +> empty)) time
               | left
                   == Nothing
-                  && doAction
-                      acc
+                  && dAcc
                       (sqToRect (sinp w (2.0 * pi / 3.0)) (cosp h (2.0 * pi / 3.0)) cw) = nextTriangle acc i (\t -> (top +> (Just t) +> right +> empty)) time
               | right
                   == Nothing
-                  && doAction
-                      acc
+                  && dAcc
                       (sqToRect (sinp w (4.0 * pi / 3.0)) (cosp h (4.0 * pi / 3.0)) cw) = nextTriangle acc i (\t -> (top +> left +> (Just t) +> empty)) time
               | otherwise =
                 pure
@@ -786,7 +878,7 @@ makeCanvas acc time = do
 
             bottomRight = V.index v d3
 
-            cw = w / 17.0
+            cw = (min w h) / 17.0
 
             twoCw = 2.0 * cw
 
@@ -808,23 +900,19 @@ makeCanvas acc time = do
                     )
               | topLeft
                   == Nothing
-                  && doAction
-                      acc
+                  && dAcc
                       (sqToRect (c1 * w) (c1 * h) cw) = nextSquare acc i (\t -> ((Just t) +> topRight +> bottomLeft +> bottomRight +> empty)) time
               | topRight
                   == Nothing
-                  && doAction
-                      acc
+                  && dAcc
                       (sqToRect (c2 * w) (c1 * h) cw) = nextSquare acc i (\t -> (topLeft +> (Just t) +> bottomLeft +> bottomRight +> empty)) time
               | bottomLeft
                   == Nothing
-                  && doAction
-                      acc
+                  && dAcc
                       (sqToRect (c1 * w) (c2 * h) cw) = nextSquare acc i (\t -> (topLeft +> topRight +> (Just t) +> bottomRight +> empty)) time
               | bottomRight
                   == Nothing
-                  && doAction
-                      acc
+                  && dAcc
                       (sqToRect (c2 * w) (c2 * h) cw) = nextSquare acc i (\t -> (topLeft +> topRight +> bottomLeft +> (Just t) +> empty)) time
               | otherwise =
                 pure
@@ -863,77 +951,94 @@ makeCanvas acc time = do
                     )
           in
             o
-        Motion m ->
+        Motion lr ->
           let
-            cw = w / 16.0
+            cw = (min w h) / 16.0
 
-            xp = maybe' (\_ -> (mouseOrBust acc.mousePosition).x) (\v -> w * v.x) m
+            xp = eix w acc lr
 
-            yp = maybe' (\_ -> (mouseOrBust acc.mousePosition).x) (\v -> h * v.y) m
+            yp = eiy h acc lr
+
+            textNormal = 1.0
+
+            instr
+              | time < i.eventStart + standardIntro + textNormal + standardOutro =
+                let
+                  opacity
+                    | time < i.eventStart + standardIntro = calcSlope i.eventStart 0.0 (i.eventStart + standardIntro) 1.0 time
+                    | time < i.eventStart + standardIntro + textNormal = 1.0
+                    | time < i.eventStart + standardIntro + textNormal + standardOutro = calcSlope (i.eventStart + standardIntro + textNormal) 1.0 (i.eventStart + standardIntro + textNormal + standardOutro) 0.0 time
+                    | otherwise = 0.0
+                in
+                  text
+                    (font sansSerif 16 italic)
+                    (w * 0.31)
+                    (h * 0.31)
+                    (fillColor (whiteRGBA opacity))
+                    "(move the circle)"
+              | otherwise = mempty
 
             o
               | time > i.eventStart + standardIntro + motionNormal + standardOutro = newCanvas i acc time
               | time < i.eventStart + standardIntro =
                 pure
                   $ Tuple acc
-                      ( filled
-                          (fillColor (whiteRGBA (min 1.0 $ (time - i.eventStart) / standardIntro)))
-                          (circle xp yp cw)
+                      ( instr
+                          <> filled
+                              (fillColor (whiteRGBA (min 1.0 $ (time - i.eventStart) / standardIntro)))
+                              (circle xp yp cw)
                       )
-              | maybe
-                  false
-                  ( const
-                      $ doingAction
-                          acc
-                          (sqToRect xp yp cw)
-                  )
-                  m = nextMotion acc i Nothing time
-              | maybe
-                  (not acc.inClick)
-                  (const $ false)
-                  m = nextMotion acc i (Just { x: xp, y: yp }) time
+              | needsToFollow xp yp cw acc lr = nextMotion acc i (Right { x: (mouseOrBust acc.mousePosition).x - xp, y: (mouseOrBust acc.mousePosition).y - yp }) time
+              | needsToStopFollowing acc lr = nextMotion acc i (Left { x: xp / w, y: yp / h }) time
               | otherwise =
                 pure
                   $ Tuple acc
-                      ( filled
-                          ( fillColor
-                              ( whiteRGBA
-                                  ( if time < i.eventStart + standardIntro + motionNormal then
-                                      1.0
-                                    else
-                                      calcSlope (i.eventStart + standardIntro + motionNormal) 1.0 (i.eventStart + standardIntro + motionNormal + standardOutro) 0.0 time
+                      ( instr
+                          <> filled
+                              ( fillColor
+                                  ( whiteRGBA
+                                      ( if time < i.eventStart + standardIntro + motionNormal then
+                                          1.0
+                                        else
+                                          calcSlope (i.eventStart + standardIntro + motionNormal) 1.0 (i.eventStart + standardIntro + motionNormal + standardOutro) 0.0 time
+                                      )
                                   )
                               )
-                          )
-                          (circle xp yp cw)
+                              (circle xp yp cw)
                       )
           in
             o
         Rise v ->
           let
-            one@(Tuple oneN oneS) = V.index v d0
+            one = V.index v d0
 
-            two@(Tuple twoN twoS) = V.index v d1
+            two = V.index v d1
 
-            three@(Tuple threeN threeS) = V.index v d2
+            three = V.index v d2
 
-            four@(Tuple fourN fourS) = V.index v d3
+            four = V.index v d3
 
-            five@(Tuple fiveN fiveS) = V.index v d4
+            five = V.index v d4
 
-            six@(Tuple sixN sixS) = V.index v d5
+            six = V.index v d5
 
-            cw = w / 16.0
+            cw = (min w h) / 21.0
 
             nextRise = nextObj Rise
 
             twoCw = 2.0 * cw
 
-            tillNormal = i.eventStart + standardIntro + riseNormal
+            tillIntroEnd = i.eventStart + standardIntro
+
+            tillNormal = tillIntroEnd + riseNormal
+
+            normalizedTime = pnCurve 1.2 $ (time - tillIntroEnd) / riseNormal
+
+            heightNow = h * (calcSlope 0.0 0.9 1.0 0.1 (min normalizedTime 1.0))
 
             o
               | time > tillNormal + standardOutro = newCanvas i acc time
-              | time < i.eventStart + standardIntro =
+              | time < tillIntroEnd =
                 pure
                   $ Tuple acc
                       ( fold
@@ -947,44 +1052,165 @@ makeCanvas acc time = do
                               riseXP
                           )
                       )
-              | isNothing oneS
-                  && doAction
-                      acc
-                      (sqToRect (1.0 * w / 12.0) (oneN * h) cw) = nextRise acc i (\t -> Tuple oneN (Just time) +> two +> three +> four +> five +> six +> empty) time
-              | isNothing twoS
-                  && doAction
-                      acc
-                      (sqToRect (3.0 * w / 12.0) (twoN * h) cw) = nextRise acc i (\t -> one +> Tuple twoN (Just time) +> three +> four +> five +> six +> empty) time
-              | isNothing threeS
-                  && doAction
-                      acc
-                      (sqToRect (5.0 * w / 12.0) (threeN * h) cw) = nextRise acc i (\t -> one +> two +> Tuple threeN (Just time) +> four +> five +> six +> empty) time
-              | isNothing fourS
-                  && doAction
-                      acc
-                      (sqToRect (7.0 * w / 12.0) (fourN * h) cw) = nextRise acc i (\t -> one +> two +> three +> Tuple fourN (Just time) +> five +> six +> empty) time
-              | isNothing fiveS
-                  && doAction
-                      acc
-                      (sqToRect (9.0 * w / 12.0) (fiveN * h) cw) = nextRise acc i (\t -> one +> two +> three +> four +> Tuple fiveN (Just time) +> six +> empty) time
-              | isNothing sixS
-                  && doAction
-                      acc
-                      (sqToRect (11.0 * w / 12.0) (sixN * h) cw) = nextRise acc i (\t -> one +> two +> three +> four +> five +> Tuple sixN (Just time) +> empty) time
+              | isNothing one
+                  && dAcc
+                      (sqToRect (1.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> (Just heightNow) +> two +> three +> four +> five +> six +> empty) time
+              | isNothing two
+                  && dAcc
+                      (sqToRect (3.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> (Just heightNow) +> three +> four +> five +> six +> empty) time
+              | isNothing three
+                  && dAcc
+                      (sqToRect (5.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> (Just heightNow) +> four +> five +> six +> empty) time
+              | isNothing four
+                  && dAcc
+                      (sqToRect (7.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> (Just heightNow) +> five +> six +> empty) time
+              | isNothing five
+                  && dAcc
+                      (sqToRect (9.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> four +> (Just heightNow) +> six +> empty) time
+              | isNothing six
+                  && dAcc
+                      (sqToRect (11.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> four +> five +> (Just heightNow) +> empty) time
               | otherwise =
                 pure
                   $ Tuple acc
                       ( fold
                           ( map
-                              ( \(Tuple xp stopped) ->
+                              ( \(Tuple xp pegged) ->
                                   ( filled
-                                      (fillColor (whiteRGBA 1.0))
-                                      (circle (w * xp) (h * (calcSlope (i.eventStart + standardIntro) 0.9 (tillNormal) 0.1 (fromMaybe (min time tillNormal) stopped))) cw)
+                                      (fillColor (whiteRGBA (if time > tillNormal then calcSlope tillNormal 1.0 (tillNormal + standardOutro) 0.0 time else 1.0)))
+                                      (circle (w * xp) (fromMaybe heightNow pegged) cw)
                                   )
                               )
-                              (zip riseXP [ oneS, twoS, threeS, fourS, fiveS, sixS ])
+                              (zip riseXP [ one, two, three, four, five, six ])
                           )
                       )
+          in
+            o
+        Shrink v ->
+          let
+            sqv = sequence v
+
+            shrinkToRect (SnowI xp yp rr) = sqToRect (xp * w) (yp * h) (rr * (min w h) / 2.0)
+
+            one = V.index v d0
+
+            two = V.index v d1
+
+            three = V.index v d2
+
+            four = V.index v d3
+
+            five = V.index v d4
+
+            six = V.index v d5
+
+            shrinkOne = SnowI 0.5 0.6 0.1
+
+            shrinkTwo = SnowI 0.7 0.2 0.15
+
+            shrinkThree = SnowI 0.2 0.8 0.6
+
+            shrinkFour = SnowI 0.3 0.4 0.3
+
+            shrinkFive = SnowI 0.72 0.7 0.35
+
+            shrinkSix = SnowI 0.9 0.8 0.05
+
+            nextShrink = nextObj Shrink
+
+            o
+              -- todo: 1.5 magic number, change - allows for shrink
+              | maybe false (\s -> time > foldl max 0.0 s + 1.5) sqv = newCanvas i acc time
+              | time < i.eventStart + standardIntro =
+                pure
+                  $ ( Tuple acc
+                        $ fold
+                            ( map
+                                ( \(SnowI xp yp rr) ->
+                                    filled (fillColor (whiteRGBA ((time - i.eventStart) / standardIntro)))
+                                      (circle (xp * w) (yp * h) (rr * (min w h) / 2.0))
+                                )
+                                [ shrinkOne, shrinkTwo, shrinkThree, shrinkFour, shrinkFive, shrinkSix ]
+                            )
+                    )
+              | one
+                  == Nothing
+                  && dAcc
+                      (shrinkToRect shrinkOne) = nextShrink acc i (\t -> V.updateAt d0 (Just t) v) time
+              | two
+                  == Nothing
+                  && dAcc
+                      (shrinkToRect shrinkTwo) = nextShrink acc i (\t -> V.updateAt d1 (Just t) v) time
+              | three
+                  == Nothing
+                  && dAcc
+                      (shrinkToRect shrinkThree) = nextShrink acc i (\t -> V.updateAt d2 (Just t) v) time
+              | four
+                  == Nothing
+                  && dAcc
+                      (shrinkToRect shrinkFour) = nextShrink acc i (\t -> V.updateAt d3 (Just t) v) time
+              | five
+                  == Nothing
+                  && dAcc
+                      (shrinkToRect shrinkFive) = nextShrink acc i (\t -> V.updateAt d4 (Just t) v) time
+              | six
+                  == Nothing
+                  && dAcc
+                      (shrinkToRect shrinkSix) = nextShrink acc i (\t -> V.updateAt d5 (Just t) v) time
+              | otherwise =
+                pure
+                  $ ( Tuple acc
+                        $ fold
+                            ( map
+                                ( \(Tuple (SnowI xp yp rr) n) ->
+                                    let
+                                      nowT = maybe 0.0 (\s -> (time - foldl max 0.0 s)) sqv
+
+                                      r = case n of
+                                        Nothing -> rr
+                                        Just n' -> max 0.0 (rr - (time - n') * 0.5)
+                                    in
+                                      filled
+                                        ( fillColor
+                                            (whiteRGBA 1.0)
+                                        )
+                                        ( circle
+                                            (w * xp)
+                                            (h * yp)
+                                            (r * (min w h) / 2.0)
+                                        )
+                                )
+                                [ Tuple shrinkOne one
+                                , Tuple shrinkTwo two
+                                , Tuple shrinkThree three
+                                , Tuple shrinkFour four
+                                , Tuple shrinkFive five
+                                , Tuple shrinkSix six
+                                ]
+                            )
+                    )
+          in
+            o
+        Snow a ->
+          let
+            stTime = i.eventStart
+
+            nowT = time - stTime
+
+            terminus = h * 1.1
+
+            yp = snowYp h nowT
+
+            o
+              | not
+                  ( bFoldL
+                      ( \v x -> case x of
+                          Nothing -> yp (maybe 100.0 (\(SnowI _ b _) -> b) (A.index snows v)) < terminus
+                          (Just _) -> false
+                      )
+                      a
+                  ) = newCanvas i acc time
+              | otherwise = snowRecurser i w h acc stTime time a
           in
             o
         _ -> pure $ Tuple acc mempty
@@ -1010,7 +1236,7 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
               { x: x - ci.boundingClientRect.x, y: y - ci.boundingClientRect.y
               }
           )
-            <$> head p.interactions
+            <$> p.referencePosition
         , initiatedClick = (_.id <$> head p.interactions) /= acc'.curClickId
         , inClick = p.nInteractions /= 0
         , curClickId = _.id <$> head p.interactions
@@ -1020,13 +1246,11 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
 
     players = Nil
 
-riseStart = Tuple 0.0 Nothing :: Tuple Number (Maybe Number)
-
 allPlayerEvent =
   [ Triangle (fill (const Nothing))
   , Square (fill (const Nothing))
-  , Motion (Just { x: 0.18, y: 0.18 })
-  , Rise (fill (const riseStart))
+  , Motion (Left { x: 0.18, y: 0.18 })
+  , Rise (fill (const Nothing))
   , Towards
       ( Left { x: 0.15, y: 0.15 }
           +> Left { x: 0.85, y: 0.15 }
@@ -1036,11 +1260,11 @@ allPlayerEvent =
       )
   , Explode (ExplodeStage0 Nothing)
   , Large Nil
-  , Bells (fill (const Nothing))
+  , Bells (A.replicate 24 Nothing)
   , Tether (Tuple { x: 0.5, y: 0.5 } false)
   , Gears (fill (const Nothing))
   , Shrink (fill (const Nothing))
-  , Snow (fill (const Nothing))
+  , Snow (L.fromFoldable $ A.replicate snowL Nothing)
   ] ::
     Array PlayerEvent
 
@@ -1059,13 +1283,17 @@ acx a =
     , eventStart: 0.0
     }
 
-acC = acx [ Triangle (Nothing +> Nothing +> Nothing +> empty) ] :: Activity
+acC = acx [ Triangle (fill $ const Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
-acD = acx [ Square (Nothing +> Nothing +> Nothing +> Nothing +> empty) ] :: Activity
+acD = acx [ Square (fill $ const Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
-acE = acx [ Motion (Just { x: 0.18, y: 0.18 }) ] :: Activity
+acE = acx [ Motion (Left { x: 0.18, y: 0.18 }), Square (fill $ const Nothing) ] :: Activity
 
-acF = acx [ Rise (fill $ const riseStart) ] :: Activity
+acF = acx [ Rise (fill $ const Nothing), Square (fill $ const Nothing) ] :: Activity
+
+acG = acx [ Snow (L.fromFoldable $ A.replicate snowL Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+
+acH = acx [ Shrink (fill $ const Nothing), Square (fill $ const Nothing) ] :: Activity
 
 main :: Klank' SilentNightAccumulator
 main =
@@ -1091,7 +1319,7 @@ main =
           { initiatedClick: false
           , curClickId: Nothing
           , mousePosition: Nothing
-          , activity: acE
+          , activity: acH
           , inClick: false
           }
     , exporter = defaultExporter
@@ -1104,6 +1332,7 @@ newtype Interactions
   = Interactions
   { interactions :: Ref.Ref (InteractionOnsets)
   , nInteractions :: Ref.Ref Int
+  , referencePosition :: Ref.Ref (Maybe Point)
   , dispose :: Effect Unit
   }
 
@@ -1114,23 +1343,33 @@ type InteractionOnsets
       , y :: Number
       }
 
-handleTE :: Int -> Ref.Ref (InteractionOnsets) -> TouchEvent -> Effect Unit
-handleTE i ref te = do
+handleTE :: Int -> Ref.Ref (InteractionOnsets) -> Ref.Ref (Maybe Point) -> TouchEvent -> Effect Unit
+handleTE i ref pr te = do
   let
     ts = changedTouches te
   let
     l = TL.length ts
   let
     tlist = map (\t -> { id: i, x: toNumber $ T.clientX t, y: toNumber $ T.clientY t }) (catMaybes $ map (\x -> TL.item x ts) (range 0 (l - 1)))
+  Ref.write (map (\{ x, y } -> { x, y }) (head tlist)) pr
   void $ Ref.modify (\ipt -> tlist <> ipt) ref
 
-handleME :: Int -> Ref.Ref (InteractionOnsets) -> MouseEvent -> Effect Unit
-handleME id ref me = do
+handleME :: Int -> Ref.Ref (InteractionOnsets) -> Ref.Ref (Maybe Point) -> MouseEvent -> Effect Unit
+handleME id ref pr me = do
   let
     x = toNumber $ ME.clientX me
   let
     y = toNumber $ ME.clientY me
+  Ref.write (Just { x, y }) pr
   void $ Ref.modify (\ipt -> [ { id, x, y } ] <> ipt) ref
+
+handleMM :: Ref.Ref (Maybe Point) -> MouseEvent -> Effect Unit
+handleMM pr me = do
+  let
+    x = toNumber $ ME.clientX me
+  let
+    y = toNumber $ ME.clientY me
+  Ref.write (Just { x, y }) pr
 
 getInteractivity :: Effect Interactions
 getInteractivity = do
@@ -1140,6 +1379,7 @@ getInteractivity = do
   let
     mobile = isJust (indexOf (Pattern "iPhone") ua) || isJust (indexOf (Pattern "iPad") ua) || isJust (indexOf (Pattern "Android") ua)
   nInteractions <- Ref.new 0
+  referencePosition <- Ref.new Nothing
   totalInteractions <- Ref.new 0
   interactions <- Ref.new []
   target <- toEventTarget <$> window
@@ -1149,7 +1389,7 @@ getInteractivity = do
         # traverse_ \me -> do
             void $ Ref.modify (_ + 1) nInteractions
             nt <- Ref.modify (_ + 1) totalInteractions
-            handleTE nt interactions me
+            handleTE nt interactions referencePosition me
   touchEndListener <-
     eventListener \e -> do
       fromEvent e
@@ -1161,7 +1401,12 @@ getInteractivity = do
         # traverse_ \me -> do
             void $ Ref.modify (_ + 1) nInteractions
             nt <- Ref.modify (_ + 1) totalInteractions
-            handleME nt interactions me
+            handleME nt interactions referencePosition me
+  mouseMoveListener <-
+    eventListener \e -> do
+      ME.fromEvent e
+        # traverse_ \me -> do
+            handleMM referencePosition me
   mouseUpListener <-
     eventListener \e -> do
       ME.fromEvent e
@@ -1172,6 +1417,7 @@ getInteractivity = do
     addEventListener (wrap "touchend") touchEndListener false target
   else do
     addEventListener (wrap "mousedown") mouseDownListener false target
+    addEventListener (wrap "mousemove") mouseMoveListener false target
     addEventListener (wrap "mouseup") mouseUpListener false target
   let
     dispose =
@@ -1180,25 +1426,27 @@ getInteractivity = do
         removeEventListener (wrap "touchend") touchEndListener false target
       else do
         removeEventListener (wrap "mousedown") mouseDownListener false target
+        removeEventListener (wrap "mousemove") mouseMoveListener false target
         removeEventListener (wrap "mouseup") mouseUpListener false target
-  pure (Interactions { interactions, nInteractions, dispose })
+  pure (Interactions { interactions, referencePosition, nInteractions, dispose })
 
 withInteractions ::
   forall a.
   Interactions ->
   Event a ->
-  Event { value :: a, interactions :: InteractionOnsets, nInteractions :: Int }
-withInteractions (Interactions { interactions, nInteractions }) e =
+  Event { value :: a, interactions :: InteractionOnsets, nInteractions :: Int, referencePosition :: Maybe Point }
+withInteractions (Interactions { interactions, nInteractions, referencePosition }) e =
   makeEvent \k ->
     e
       `subscribe`
         \value -> do
           interactionsValue <- Ref.read interactions
           nInteractionsValue <- Ref.read nInteractions
-          k { value, interactions: interactionsValue, nInteractions: nInteractionsValue }
+          referencePositionValue <- Ref.read referencePosition
+          k { value, interactions: interactionsValue, nInteractions: nInteractionsValue, referencePosition: referencePositionValue }
 
-interactionLog :: Interactions -> Behavior ({ interactions :: InteractionOnsets, nInteractions :: Int })
-interactionLog m = behavior \e -> map (\{ value, interactions, nInteractions } -> value { interactions, nInteractions }) (withInteractions m e)
+interactionLog :: Interactions -> Behavior ({ interactions :: InteractionOnsets, nInteractions :: Int, referencePosition :: Maybe Point })
+interactionLog m = behavior \e -> map (\{ value, interactions, nInteractions, referencePosition } -> value { interactions, nInteractions, referencePosition }) (withInteractions m e)
 
 -- print(",".join(["{x:"+str(random.random())+",y:"+str(random.random())+",f: \\x -> "+str(random.random()*0.9+0.1)+" * sin ("+str(random.random()*0.6 + 0.1)+" * (x + "+str(random.random())+") * pi) }" for x in range(100)]))
 starDs :: Array { x :: Number, y :: Number, f :: Number -> Number }
@@ -1208,3 +1456,13 @@ star :: Number -> Number -> (Number -> Number) -> Number -> Number -> Number -> 
 star x y f w h t = let c = floor $ calcSlope (-1.0) 120.0 1.0 255.0 (f t) in filled (fillColor (rgb c c c)) (circle (x * w) (y * h) 1.0)
 
 starFs = map (\{ x, y, f } -> star x y f) starDs :: Array (Number -> Number -> Number -> Drawing)
+
+data SnowI
+  = SnowI Number Number Number
+
+-- print(",".join(["SnowI "+str(random.random())+" "+str(random.random())+" "+str(random.random()) for x in range(42)]))
+snows = [ SnowI 0.1763482237244488 0.7843392558067448 0.8736775739009528, SnowI 0.28200324903345875 0.7616174886387548 0.9886386189118499, SnowI 0.5333998008487347 0.9930176360953382 0.4358035440368596, SnowI 0.6215201584313228 0.2579016465924222 0.9752643594074341, SnowI 0.866939186383011 0.8360805146799725 0.7958765209012253, SnowI 0.8316783439260418 0.37836656895524046 0.5791729169409586, SnowI 0.2733107241502992 0.3612653659521434 0.19231210814850852, SnowI 0.31027228153383757 0.13944530644247088 0.7550167721602923, SnowI 0.9998447705284339 0.6730718131664458 0.8426964150644125, SnowI 0.17929816108198704 0.790475448268706 0.0003747545515384587, SnowI 0.5146676245826576 0.9116200472758966 0.8531328483755889, SnowI 0.16350352611390262 0.035050938943344545 0.12000898554296346, SnowI 0.02235639770750919 0.2637379491356546 0.38653640592838456, SnowI 0.09638415930577127 0.5450761098431707 0.04520437463832483, SnowI 0.4892276041330552 0.3173833927642091 0.9635762922386145, SnowI 0.5579747466273458 0.4261821763227277 0.034829543965688825, SnowI 0.1383348346924944 0.8730898886001669 0.5821842719623467, SnowI 0.5417335843317096 0.5227917372193671 0.5841349868208985, SnowI 0.561091946480468 0.7226139875075132 0.3254593174473801, SnowI 0.18440849817668648 0.8842935817289816 0.23906878196524894, SnowI 0.8395874260044586 0.28184640063208755 0.14333272039170541, SnowI 0.6156612759042932 0.713960173022045 0.7480729332633452, SnowI 0.38173188767605626 0.7387808291538753 0.6278447076280427, SnowI 0.24589553416745413 0.5290708205531433 0.32196549155354526, SnowI 0.35871499328693446 0.7548104803495969 0.20947469621974146, SnowI 0.7788111970805636 0.5267905775598622 0.6587485955119049, SnowI 0.6335840127131971 0.22575848163364354 0.8774238179179625, SnowI 0.4775763671281781 0.23139336402021182 0.4714066657711262, SnowI 0.6117193254284164 0.5404145696505988 0.9423220409781308, SnowI 0.8393112405852664 0.5386134230858991 0.34356584701617143, SnowI 0.7273029953298517 0.9157883450982325 0.5161433407992876, SnowI 0.7523225195383978 0.9706116721435495 0.8485145712220996, SnowI 0.25565438866795875 0.4858444945461321 0.02409997710228562, SnowI 0.2482461461505997 0.06998419990506399 0.8023056575942396, SnowI 0.6447100246955894 0.23461445726865426 0.7437139284297501, SnowI 0.4037462586982459 0.8347403986979446 0.6252308698800807, SnowI 0.5777309693538369 0.7523862184546504 0.7963104491899832, SnowI 0.10765091503325408 0.9055179728124041 0.5411994836080661, SnowI 0.009800138222332277 0.2174946835643694 0.9471799584836776, SnowI 0.5718328748696805 0.1991607030882191 0.6324687034592706, SnowI 0.009331228956806159 0.8127670538006947 0.10168511813889736, SnowI 0.971185774284385 0.6019894835093992 0.5234232707786459 ] :: Array SnowI
+
+snowL = A.length snows :: Int
+
+snowList = L.fromFoldable snows :: List SnowI
