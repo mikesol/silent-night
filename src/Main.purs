@@ -52,7 +52,7 @@ import Web.UIEvent.MouseEvent as ME
 ------
 tempo = 72.0 :: Number
 
-measure = 180.0 / tempo :: Number
+measureDur = 180.0 / tempo :: Number
 
 crotchet = 60.0 / tempo :: Number
 
@@ -66,33 +66,26 @@ introInMeasures = 4.0 :: Number
 
 silentNightInMeasures = 26.0 :: Number -- includes 2m transition
 
-pieceInMeasures = measure * (silentNightInMeasures + silentNightInMeasures + silentNightInMeasures + introInMeasures + preCodaInMeasures) :: Number
+pieceInMeasures = measureDur * (silentNightInMeasures + silentNightInMeasures + silentNightInMeasures + introInMeasures + preCodaInMeasures) :: Number
 
 type MusicalInfo
   = { measure :: Int
-    , beat :: Int
-    , eighth :: Int
-    , sixteenth :: Int
+    , beat :: Number
     }
 
-placeInSong :: Number -> MusicalInfo
-placeInSong t =
+musicalInfoToTime :: MusicalInfo -> Number
+musicalInfoToTime { measure, beat } = (toNumber measure * 3.0 + beat) * 60.0 / tempo
+
+timeToMusicalInfo :: Number -> MusicalInfo
+timeToMusicalInfo t =
   let
     beats = tempo * t / 60.0
 
-    mzr = floor (beats / 3.0)
+    measure = floor (beats / 3.0)
 
-    rmeasure = beats - ((toNumber mzr) * 3.0)
-
-    beat = floor rmeasure
-
-    rbeat = rmeasure - (toNumber beat)
-
-    eighth = floor (rbeat * 2.0)
-
-    sixteenth = floor (rbeat * 4.0)
+    beat = beats - ((toNumber measure) * 3.0)
   in
-    { measure: mzr, beat, eighth, sixteenth }
+    { measure, beat }
 
 ------
 conv440 :: Number -> Number
