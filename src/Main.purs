@@ -317,7 +317,9 @@ fadeOut = 2.0 :: Number
 
 dark = 0.5 :: Number
 
-silentNightFadeIn = 0.0 :: Number
+darknessFadeIn = 0.0 :: Number
+
+silentNightFadeIn = darknessFadeIn + fadeIn :: Number
 
 silentNightStay = silentNightFadeIn + fadeIn :: Number
 
@@ -353,6 +355,7 @@ calcSlope x0 y0 x1 y1 x =
 
 introOpacity :: Number -> Number
 introOpacity time
+  | time < silentNightFadeIn = calcSlope darknessFadeIn 0.0 silentNightFadeIn 0.0 time
   | time < silentNightStay = calcSlope silentNightFadeIn 0.0 silentNightStay 1.0 time
   | time < silentNightFadeOut = calcSlope silentNightStay 1.0 silentNightFadeOut 1.0 time
   | time < silentNightDark = calcSlope silentNightFadeOut 1.0 silentNightDark 0.0 time
@@ -541,17 +544,17 @@ standardOutro = 4.0 :: Number
 
 standardPress = 0.5 :: Number
 
-motionNormal = 8.0 :: Number
+motionNormal = 12.0 :: Number
 
-bellsNormal = 10.0 :: Number
+bellsNormal = 18.0 :: Number
 
-riseNormal = 8.0 :: Number
+riseNormal = 12.0 :: Number
 
 heartNormal = 10.0 :: Number
 
 snowMin = 6.0 :: Number
 
-snowMax = 20.0 :: Number
+snowMax = 24.0 :: Number
 
 snowDiff = snowMax - snowMin :: Number
 
@@ -799,9 +802,11 @@ makeCanvas acc time = do
   let
     bg = filled (fillColor (rgb 0 0 0)) (rectangle 0.0 0.0 w h)
 
+    introFade = if time > silentNightFadeIn then mempty else filled (fillColor (rgba 255 255 255 (calcSlope 0.0 1.0 silentNightFadeIn 0.0 time))) (rectangle 0.0 0.0 w h)
+
     starscape = fold (map (\f -> f w h time) starFs)
   map
-    (over _2 (\i -> if isLarge acc then bg <> i <> starscape else bg <> starscape <> i))
+    (over _2 (\i -> if isLarge acc then bg <> i <> starscape <> introFade else bg <> starscape <> i <> introFade))
     (go w h)
   where
   dAcc = doAction acc
