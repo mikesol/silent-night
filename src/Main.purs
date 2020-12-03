@@ -65,6 +65,14 @@ quaver = 30.0 / tempo :: Number
 
 semiquaver = 15.0 / tempo :: Number
 
+preCodaInMeasures = 3.0 :: Number -- really two, but slower
+
+introInMeasures = 4.0 :: Number
+
+silentNightInMeasures = 26.0 :: Number -- includes 2m transition
+
+pieceInMeasures = measure * (silentNightInMeasures + silentNightInMeasures + silentNightInMeasures + introInMeasures + preCodaInMeasures) :: Number
+
 ------
 conv440 :: Number -> Number
 conv440 i = 440.0 * (2.0 `pow` ((i - 69.0) / 12.0))
@@ -156,6 +164,7 @@ data PlayerEvent
   | Gears (Vec D4 (Maybe Number))
   | Shrink (Vec D6 (Maybe Number))
   | Snow (List (Maybe Number)) -- time
+  | Heart (Maybe Number)
   | NoEvent Number -- time
 
 derive instance eqPlayerEvent :: Eq PlayerEvent
@@ -284,6 +293,8 @@ type SilentNightAccumulator
     , curClickId :: Maybe Int
     , mousePosition :: Maybe { x :: Number, y :: Number }
     , activity :: Activity
+    , initiatedCoda :: Boolean
+    , mainStarts :: Maybe Number
     }
 
 inRect :: Point -> Rectangle -> Boolean
@@ -536,6 +547,8 @@ bellsNormal = 10.0 :: Number
 
 riseNormal = 8.0 :: Number
 
+heartNormal = 10.0 :: Number
+
 snowMin = 6.0 :: Number
 
 snowMax = 20.0 :: Number
@@ -583,7 +596,7 @@ cosp v p = (v * (((cos (p)) * 0.5 + 0.5) * 0.7 + 0.15))
 sqToRect :: Number -> Number -> Number -> Rectangle
 sqToRect x y r = { x: x - r, y: y - r, width: 2.0 * r, height: 2.0 * r }
 
-nextObj :: forall n a. Nat n => (Vec n a -> PlayerEvent) -> SilentNightAccumulator -> SilentNightPlayerT -> (Number -> Vec n a) -> Number -> MakeCanvasT
+nextObj :: forall a. (a -> PlayerEvent) -> SilentNightAccumulator -> SilentNightPlayerT -> (Number -> a) -> Number -> MakeCanvasT
 nextObj pef acc i tf time =
   makeCanvas
     ( acc
@@ -768,6 +781,18 @@ isLarge { activity: SilentNightPlayer { playerEvents } } =
 
 isLarge _ = false
 
+heartbeat :: Number -> Number -> Number -> Number -> Number -> Number -> Number
+heartbeat st b0 s0 b1 s1 t = go (t % pd)
+  where
+  pd = st + b0 + s0 + b1 + s1
+
+  go i
+    | i < st = 0.0
+    | i < b0 + st = sin ((i - st) * pi / b0)
+    | i < s0 + b0 + st = 0.0
+    | i < b1 + s0 + b0 + st = 0.7 * sin ((i - b0 - s0 - st) * pi / b1)
+    | otherwise = 0.0
+
 makeCanvas :: SilentNightAccumulator -> Number -> MakeCanvasT
 makeCanvas acc time = do
   { w, h } <- ask
@@ -823,7 +848,8 @@ makeCanvas acc time = do
         if time > i.startsAt + circleFlyAway then
           makeCanvas
             ( acc
-                { activity =
+                { mainStarts = Just time
+                , activity =
                   SilentNightPlayer
                     { verse: Verse1
                     , verseOne: i.verseOne
@@ -852,6 +878,52 @@ makeCanvas acc time = do
             newCanvas i acc time
           else
             pure $ Tuple acc mempty
+        Heart v ->
+          let
+            cw = (min w h) / 9.0
+
+            nextHeart = nextObj Heart
+
+            o
+              | maybe false (\s -> time > standardOutro + s + heartNormal) v = newCanvas i acc time
+              | time < i.eventStart + standardIntro =
+                pure
+                  $ ( Tuple acc
+                        $ filled
+                            ( fillColor
+                                (whiteRGBA ((time - i.eventStart) / standardIntro))
+                            )
+                            ( circle
+                                (w / 2.0)
+                                (h / 2.0)
+                                cw
+                            )
+                    )
+              | v
+                  == Nothing
+                  && dAcc
+                      (sqToRect (w / 2.0) (h / 2.0) cw) = nextHeart acc i Just time
+              | otherwise =
+                pure
+                  $ ( Tuple acc
+                        $ ( filled
+                              ( fillColor
+                                  ( whiteRGBA
+                                      ( case v of
+                                          Nothing -> 1.0
+                                          Just n' -> max 0.0 (min 1.0 (calcSlope (n' + heartNormal) 1.0 (standardOutro + n' + heartNormal) 0.0 time))
+                                      )
+                                  )
+                              )
+                              ( circle
+                                  (w / 2.0)
+                                  (h / 2.0)
+                                  (cw * (1.0 + 0.08 * heartbeat 0.2 0.3 0.2 0.25 0.5 (maybe 0.0 (time - _) v)))
+                              )
+                          )
+                    )
+          in
+            o
         Triangle v ->
           let
             sqv = sequence v
@@ -1458,6 +1530,23 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
       (Just cvs)
       vizAcc
     where
+    inCoda = maybe false (\v -> time >= v + pieceInMeasures) acc'.mainStarts
+
+    codizedActivity =
+      if inCoda && not acc'.initiatedCoda then
+        ( ( case _ of
+              SilentNightPlayer i ->
+                SilentNightPlayer
+                  i
+                    { playerEvents = A.take 1 i.playerEvents <> [ Heart Nothing ]
+                    }
+              x -> x
+          )
+            acc'.activity
+        )
+      else
+        acc'.activity
+
     acc =
       acc'
         { mousePosition =
@@ -1469,6 +1558,8 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
         , initiatedClick = (_.id <$> head p.interactions) /= acc'.curClickId
         , inClick = p.nInteractions /= 0
         , curClickId = _.id <$> head p.interactions
+        , initiatedCoda = inCoda
+        , activity = codizedActivity
         }
 
     (Tuple vizAcc cvs) = runReader (makeCanvas acc time) { evts, w: ci.w, h: ci.h }
@@ -1521,6 +1612,8 @@ acJ = acx [ Large Nil, Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
 acK = acx [ Gears (fill $ const Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
+acL = acx [ Heart Nothing, Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+
 shuffle :: forall a. Array a -> Effect (Array a)
 shuffle x = go 0 x
   where
@@ -1559,6 +1652,8 @@ main =
           , mousePosition: Nothing
           , activity: acA
           , inClick: false
+          , initiatedCoda: false
+          , mainStarts: Nothing
           }
     , exporter = defaultExporter
     , buffers =
