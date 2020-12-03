@@ -1,4 +1,4 @@
-module Klank.NatureBoy where
+module Klank.SilentNight where
 
 import Prelude
 import Color (Color, rgb, rgba)
@@ -7,8 +7,8 @@ import Control.Parallel (parallel, sequential)
 import Control.Promise (toAffE)
 import Data.Array (catMaybes, drop, filter, fold, head, range, zip)
 import Data.Array as A
-import Data.DateTime.Instant (Instant, unInstant)
-import Data.Either (Either(..), either, isLeft)
+import Data.DateTime.Instant (unInstant)
+import Data.Either (Either(..), either)
 import Data.Foldable (class Foldable, foldl, traverse_)
 import Data.Int (floor, toNumber)
 import Data.Lens (_2, over)
@@ -21,8 +21,7 @@ import Data.Profunctor (lcmap)
 import Data.String (Pattern(..), indexOf)
 import Data.Traversable (sequence)
 import Data.Tuple (Tuple(..), fst)
-import Data.Typelevel.Num (class Lt, class Nat, class Pos, D0, D10, D2, D24, D3, D4, D5, D6, d0, d1, d2, d3, d4, d5)
-import Data.Typelevel.Num as TLN
+import Data.Typelevel.Num (D2, D3, D4, D6, d0, d1, d2, d3, d4, d5)
 import Data.Vec (Vec, empty, fill, (+>))
 import Data.Vec as V
 import Effect (Effect)
@@ -32,20 +31,16 @@ import Effect.Now (now)
 import Effect.Random (random)
 import Effect.Ref as Ref
 import FRP.Behavior (Behavior, behavior)
-import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, BrowserAudioBuffer, CanvasInfo(..), Instruction, decodeAudioDataFromUri, defaultExporter, evalPiecewise, gain_, runInBrowser_, speaker')
+import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, BrowserAudioBuffer, CanvasInfo(..), decodeAudioDataFromUri, defaultExporter, evalPiecewise, gain_, runInBrowser_, speaker')
 import FRP.Event (Event, makeEvent, subscribe)
 import Foreign.Object as O
 import Graphics.Canvas (Rectangle)
-import Graphics.Drawing (Drawing, Point, arc, circle, clipped, closed, fillColor, filled, lineWidth, outlineColor, outlined, rectangle, text)
+import Graphics.Drawing (Drawing, Point, arc, circle, fillColor, filled, lineWidth, outlineColor, outlined, rectangle, text)
 import Graphics.Drawing.Font (FontOptions, bold, font, italic, sansSerif)
 import Math (pow, sin, cos, pi, (%))
-import Random.LCG (mkSeed)
-import Record.Extra (SLProxy(..), SNil)
-import Type.Data.Graph (type (:/))
 import Type.Klank.Dev (Klank', affable, defaultEngineInfo, klank)
 import Web.Event.EventTarget (addEventListener, eventListener, removeEventListener)
 import Web.HTML (window)
-import Web.HTML.Event.EventTypes (offline)
 import Web.HTML.Navigator (userAgent)
 import Web.HTML.Window (navigator, toEventTarget)
 import Web.TouchEvent.Touch as T
@@ -72,6 +67,32 @@ introInMeasures = 4.0 :: Number
 silentNightInMeasures = 26.0 :: Number -- includes 2m transition
 
 pieceInMeasures = measure * (silentNightInMeasures + silentNightInMeasures + silentNightInMeasures + introInMeasures + preCodaInMeasures) :: Number
+
+type MusicalInfo
+  = { measure :: Int
+    , beat :: Int
+    , eighth :: Int
+    , sixteenth :: Int
+    }
+
+placeInSong :: Number -> MusicalInfo
+placeInSong t =
+  let
+    beats = tempo * t / 60.0
+
+    mzr = floor (beats / 3.0)
+
+    rmeasure = beats - ((toNumber mzr) * 3.0)
+
+    beat = floor rmeasure
+
+    rbeat = rmeasure - (toNumber beat)
+
+    eighth = floor (rbeat * 2.0)
+
+    sixteenth = floor (rbeat * 4.0)
+  in
+    { measure: mzr, beat, eighth, sixteenth }
 
 ------
 conv440 :: Number -> Number
@@ -1701,6 +1722,16 @@ handleME id ref pr me = do
   Ref.write (Just { x, y }) pr
   void $ Ref.modify (\ipt -> [ { id, x, y } ] <> ipt) ref
 
+handleTM :: Ref.Ref (Maybe Point) -> TouchEvent -> Effect Unit
+handleTM pr te = do
+  let
+    ts = changedTouches te
+  let
+    l = TL.length ts
+  let
+    tlist = map (\t -> { x: toNumber $ T.clientX t, y: toNumber $ T.clientY t }) (catMaybes $ map (\x -> TL.item x ts) (range 0 (l - 1)))
+  Ref.write (map (\{ x, y } -> { x, y }) (head tlist)) pr
+
 handleMM :: Ref.Ref (Maybe Point) -> MouseEvent -> Effect Unit
 handleMM pr me = do
   let
@@ -1728,6 +1759,11 @@ getInteractivity = do
             void $ Ref.modify (_ + 1) nInteractions
             nt <- Ref.modify (_ + 1) totalInteractions
             handleTE nt interactions referencePosition me
+  touchMoveListener <-
+    eventListener \e -> do
+      fromEvent e
+        # traverse_ \me -> do
+            handleTM referencePosition me
   touchEndListener <-
     eventListener \e -> do
       fromEvent e
@@ -1752,6 +1788,7 @@ getInteractivity = do
             void $ Ref.modify (_ - 1) nInteractions
   if mobile then do
     addEventListener (wrap "touchstart") touchStartListener false target
+    addEventListener (wrap "touchmove") touchMoveListener false target
     addEventListener (wrap "touchend") touchEndListener false target
   else do
     addEventListener (wrap "mousedown") mouseDownListener false target
@@ -1761,6 +1798,7 @@ getInteractivity = do
     dispose =
       if mobile then do
         removeEventListener (wrap "touchstart") touchStartListener false target
+        removeEventListener (wrap "touchmove") touchMoveListener false target
         removeEventListener (wrap "touchend") touchEndListener false target
       else do
         removeEventListener (wrap "mousedown") mouseDownListener false target
