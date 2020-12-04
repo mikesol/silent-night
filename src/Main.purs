@@ -37,7 +37,7 @@ import Foreign.Object as O
 import Graphics.Canvas (Rectangle)
 import Graphics.Drawing (Drawing, Point, arc, circle, fillColor, filled, lineWidth, outlineColor, outlined, rectangle, text)
 import Graphics.Drawing.Font (FontOptions, bold, font, italic, sansSerif)
-import Math (pow, sin, cos, pi, (%))
+import Math (abs, cos, pi, pow, sin, (%))
 import Type.Klank.Dev (Klank', affable, defaultEngineInfo, klank)
 import Web.Event.EventTarget (addEventListener, eventListener, removeEventListener)
 import Web.HTML (window)
@@ -49,7 +49,16 @@ import Web.TouchEvent.TouchList as TL
 import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as ME
 
-------
+-- Triangle :: Change so that it is playing at 8th rhythm, mute
+-- Square :: Middle motion when clicked, final is explosion outward
+-- Motion :: Wind
+-- Rise :: Six different instruments rising, pin to pitch
+-- Large :: Subtract from thick pad
+-- Bells :: Keyboard with changing harmony
+-- Gears :: Accelerate + different directions, rhythm is the one that guides beat
+-- Shrink :: Change this to recalibration
+-- Snow :: Bells
+-- Heart :: Beating
 tempo = 72.0 :: Number
 
 measureDur = 180.0 / tempo :: Number
@@ -324,7 +333,7 @@ data PlayerEvent
   | Large (List (Tuple Point Number)) -- pos, startT
   | Bells (List (List Number))
   | Gears (Vec D4 (Maybe Number))
-  | Shrink (Vec D6 (Maybe Number))
+  | Shrink (Vec D6 (Number))
   | Snow (List (Maybe Number)) -- time
   | Heart (Maybe Number)
   | NoEvent Number -- time
@@ -712,6 +721,8 @@ bellsNormal = 18.0 :: Number
 
 riseNormal = 12.0 :: Number
 
+shrinkNormal = 16.0 :: Number
+
 heartNormal = 10.0 :: Number
 
 snowMin = 6.0 :: Number
@@ -958,6 +969,75 @@ heartbeat st b0 s0 b1 s1 t = go (t % pd)
     | i < b1 + s0 + b0 + st = 0.7 * sin ((i - b0 - s0 - st) * pi / b1)
     | otherwise = 0.0
 
+epsilon = 0.01 :: Number
+
+eps :: Number -> Number -> Boolean
+eps a b = abs (a - b) < epsilon
+
+targetMaker :: forall a. Vec a Number -> Vec a (Number -> Number)
+targetMaker v = map (\n i -> if (eps n i) then i else i + ((n - i) * kr * 1.4)) v
+
+---- shrink vars
+targetsOne = targetMaker (0.2 +> 0.3 +> 0.4 +> 0.1 +> 0.07 +> 0.17 +> empty) :: Vec D6 (Number -> Number)
+
+targetsTwo = targetMaker (0.51 +> 0.13 +> 0.39 +> 0.26 +> 0.4 +> 0.04 +> empty) :: Vec D6 (Number -> Number)
+
+targetsThree = targetMaker (0.04 +> 0.47 +> 0.06 +> 0.39 +> 0.1 +> 0.52 +> empty) :: Vec D6 (Number -> Number)
+
+targetsFour = targetMaker (0.13 +> 0.08 +> 0.35 +> 0.43 +> 0.2 +> 0.28 +> empty) :: Vec D6 (Number -> Number)
+
+targetsFive = targetMaker (0.18 +> 0.26 +> 0.5 +> 0.12 +> 0.54 +> 0.3 +> empty) :: Vec D6 (Number -> Number)
+
+targetsSix = targetMaker (0.3 +> 0.05 +> 0.1 +> 0.6 +> 0.3 +> 0.22 +> empty) :: Vec D6 (Number -> Number)
+
+targetsDefault = targetMaker (0.1 +> 0.15 +> 0.6 +> 0.3 +> 0.35 +> 0.05 +> empty) :: Vec D6 (Number -> Number)
+
+shrinkOne = Tuple 0.5 0.6 :: Tuple Number Number
+
+shrinkTwo = Tuple 0.7 0.2 :: Tuple Number Number
+
+shrinkThree = Tuple 0.2 0.8 :: Tuple Number Number
+
+shrinkFour = Tuple 0.3 0.4 :: Tuple Number Number
+
+shrinkFive = Tuple 0.72 0.7 :: Tuple Number Number
+
+shrinkSix = Tuple 0.9 0.8 :: Tuple Number Number
+
+paintShrinks :: Number -> Number -> SilentNightAccumulator -> SilentNightPlayerT -> Vec D6 (Number -> Number) -> Vec D6 Number -> Number -> MakeCanvasT
+paintShrinks w h acc i shrinkF curPos time =
+  let
+    newPos = V.zipWith (\f x -> f x) shrinkF curPos
+  in
+    pure
+      $ ( Tuple
+            ( acc
+                { activity =
+                  SilentNightPlayer
+                    ( i
+                        { playerEvents = [ Shrink newPos ] <> drop 1 i.playerEvents
+                        }
+                    )
+                }
+            )
+            $ fold
+                ( map
+                    ( \(Tuple (Tuple xp yp) r) ->
+                        filled
+                          ( fillColor
+                              (whiteRGBA (min 1.0 (calcSlope (i.eventStart + standardIntro + shrinkNormal) 1.0 (i.eventStart + standardIntro + shrinkNormal + standardOutro) 0.0 time)))
+                          )
+                          ( circle
+                              (w * xp)
+                              (h * yp)
+                              (r * (min w h) / 2.0)
+                          )
+                    )
+                    (V.zip (shrinkOne +> shrinkTwo +> shrinkThree +> shrinkFour +> shrinkFive +> shrinkSix +> empty) newPos)
+                )
+        )
+
+----
 makeCanvas :: SilentNightAccumulator -> Number -> MakeCanvasT
 makeCanvas acc time = do
   { w, h } <- ask
@@ -1510,9 +1590,7 @@ makeCanvas acc time = do
             o
         Shrink v ->
           let
-            sqv = sequence v
-
-            shrinkToRect (SnowI xp yp rr) = sqToRect (xp * w) (yp * h) (rr * (min w h) / 2.0)
+            shrinkToRect (Tuple xp yp) rr = sqToRect (xp * w) (yp * h) (rr * (min w h) / 2.0)
 
             one = V.index v d0
 
@@ -1526,91 +1604,34 @@ makeCanvas acc time = do
 
             six = V.index v d5
 
-            shrinkOne = SnowI 0.5 0.6 0.1
-
-            shrinkTwo = SnowI 0.7 0.2 0.15
-
-            shrinkThree = SnowI 0.2 0.8 0.6
-
-            shrinkFour = SnowI 0.3 0.4 0.3
-
-            shrinkFive = SnowI 0.72 0.7 0.35
-
-            shrinkSix = SnowI 0.9 0.8 0.05
-
-            nextShrink = nextObj Shrink
-
             o
               -- todo: 1.5 magic number, change - allows for shrink
-              | maybe false (\s -> time > foldl max 0.0 s + 1.5) sqv = newCanvas i acc time
+              | time > i.eventStart + standardIntro + shrinkNormal + standardOutro = newCanvas i acc time
               | time < i.eventStart + standardIntro =
                 pure
                   $ ( Tuple acc
                         $ fold
                             ( map
-                                ( \(SnowI xp yp rr) ->
+                                ( \(Tuple (Tuple xp yp) rr) ->
                                     filled (fillColor (whiteRGBA ((time - i.eventStart) / standardIntro)))
                                       (circle (xp * w) (yp * h) (rr * (min w h) / 2.0))
                                 )
-                                [ shrinkOne, shrinkTwo, shrinkThree, shrinkFour, shrinkFive, shrinkSix ]
+                                (V.zip (shrinkOne +> shrinkTwo +> shrinkThree +> shrinkFour +> shrinkFive +> shrinkSix +> empty) shrinkStart)
                             )
                     )
-              | one
-                  == Nothing
-                  && dAcc
-                      (shrinkToRect shrinkOne) = nextShrink acc i (\t -> V.updateAt d0 (Just t) v) time
-              | two
-                  == Nothing
-                  && dAcc
-                      (shrinkToRect shrinkTwo) = nextShrink acc i (\t -> V.updateAt d1 (Just t) v) time
-              | three
-                  == Nothing
-                  && dAcc
-                      (shrinkToRect shrinkThree) = nextShrink acc i (\t -> V.updateAt d2 (Just t) v) time
-              | four
-                  == Nothing
-                  && dAcc
-                      (shrinkToRect shrinkFour) = nextShrink acc i (\t -> V.updateAt d3 (Just t) v) time
-              | five
-                  == Nothing
-                  && dAcc
-                      (shrinkToRect shrinkFive) = nextShrink acc i (\t -> V.updateAt d4 (Just t) v) time
-              | six
-                  == Nothing
-                  && dAcc
-                      (shrinkToRect shrinkSix) = nextShrink acc i (\t -> V.updateAt d5 (Just t) v) time
-              | otherwise =
-                pure
-                  $ ( Tuple acc
-                        $ fold
-                            ( map
-                                ( \(Tuple (SnowI xp yp rr) n) ->
-                                    let
-                                      nowT = maybe 0.0 (\s -> (time - foldl max 0.0 s)) sqv
-
-                                      r = case n of
-                                        Nothing -> rr
-                                        Just n' -> max 0.0 (rr - (time - n') * 0.5)
-                                    in
-                                      filled
-                                        ( fillColor
-                                            (whiteRGBA 1.0)
-                                        )
-                                        ( circle
-                                            (w * xp)
-                                            (h * yp)
-                                            (r * (min w h) / 2.0)
-                                        )
-                                )
-                                [ Tuple shrinkOne one
-                                , Tuple shrinkTwo two
-                                , Tuple shrinkThree three
-                                , Tuple shrinkFour four
-                                , Tuple shrinkFive five
-                                , Tuple shrinkSix six
-                                ]
-                            )
-                    )
+              | doingAction acc
+                  (shrinkToRect shrinkOne (V.index v d0)) = paintShrinks w h acc i targetsOne v time
+              | doingAction acc
+                  (shrinkToRect shrinkTwo (V.index v d1)) = paintShrinks w h acc i targetsTwo v time
+              | doingAction acc
+                  (shrinkToRect shrinkThree (V.index v d2)) = paintShrinks w h acc i targetsThree v time
+              | doingAction acc
+                  (shrinkToRect shrinkFour (V.index v d3)) = paintShrinks w h acc i targetsFour v time
+              | doingAction acc
+                  (shrinkToRect shrinkFive (V.index v d4)) = paintShrinks w h acc i targetsFive v time
+              | doingAction acc
+                  (shrinkToRect shrinkSix (V.index v d5)) = paintShrinks w h acc i targetsSix v time
+              | otherwise = paintShrinks w h acc i targetsDefault v time
           in
             o
         Snow a ->
@@ -1741,10 +1762,12 @@ allPlayerEvent =
   , Large Nil
   , Bells (L.fromFoldable $ A.replicate 24 Nil)
   , Gears (fill (const Nothing))
-  , Shrink (fill (const Nothing))
+  , Shrink shrinkStart
   , Snow (L.fromFoldable $ A.replicate snowL Nothing)
   ] ::
     Array PlayerEvent
+
+shrinkStart = 0.1 +> 0.15 +> 0.6 +> 0.3 +> 0.35 +> 0.05 +> empty :: Vec D6 Number
 
 acA = Intro :: Activity
 
@@ -1771,7 +1794,7 @@ acF = acx [ Rise (fill $ const Nothing), Square (fill $ const Nothing) ] :: Acti
 
 acG = acx [ Snow (L.fromFoldable $ A.replicate snowL Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
-acH = acx [ Shrink (fill $ const Nothing), Square (fill $ const Nothing) ] :: Activity
+acH = acx [ Shrink shrinkStart, Square (fill $ const Nothing) ] :: Activity
 
 acI = acx [ Bells (L.fromFoldable $ A.replicate 24 Nil), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
@@ -1817,7 +1840,7 @@ main =
           { initiatedClick: false
           , curClickId: Nothing
           , mousePosition: Nothing
-          , activity: acA
+          , activity: acH
           , inClick: false
           , initiatedCoda: false
           , mainStarts: Nothing
