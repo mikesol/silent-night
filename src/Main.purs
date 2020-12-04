@@ -49,14 +49,14 @@ import Web.TouchEvent.TouchList as TL
 import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as ME
 
+-- Shrink :: Recalibration
+-- Motion :: Wind
 -- Triangle :: Change so that it is playing at 8th rhythm, mute
 -- Square :: Middle motion when clicked, final is explosion outward
--- Motion :: Wind
+-- Gears :: Accelerate + different directions, rhythm is the one that guides beat
 -- Rise :: Six different instruments rising, pin to pitch
 -- Large :: Subtract from thick pad
 -- Bells :: Keyboard with changing harmony
--- Gears :: Accelerate + different directions, rhythm is the one that guides beat
--- Shrink :: Change this to recalibration
 -- Snow :: Bells
 -- Heart :: Beating
 tempo = 72.0 :: Number
@@ -328,7 +328,7 @@ epwf = evalPiecewise kr
 data PlayerEvent
   = Triangle (Vec D3 (Maybe Number))
   | Square (Vec D4 (Maybe Number))
-  | Motion (Either Point Point) -- resting point or offset from mouse
+  | Motion (Maybe Point) (Either Point (Tuple Point Point)) -- resting point or offset from mouse
   | Rise (Vec D6 (Maybe Number)) -- pos, stopped
   | Large (List (Tuple Point Number)) -- pos, startT
   | Bells (List (List Number))
@@ -787,30 +787,16 @@ nextObj pef acc i tf time =
     )
     time
 
-nextMotion :: SilentNightAccumulator -> SilentNightPlayerT -> Either Point Point -> Number -> MakeCanvasT
-nextMotion acc i epp time =
-  makeCanvas
-    ( acc
-        { activity =
-          SilentNightPlayer
-            ( i
-                { playerEvents = [ Motion epp ] <> drop 1 i.playerEvents
-                }
-            )
-        }
-    )
-    time
-
 mouseOrBust :: Maybe Point -> Point
 mouseOrBust = fromMaybe { x: 0.0, y: 0.0 }
 
 riseXP = [ 1.0 / 12.0, 3.0 / 12.0, 5.0 / 12.0, 7.0 / 12.0, 9.0 / 12.0, 11.0 / 12.0 ] :: Array Number
 
-eix :: Number -> SilentNightAccumulator -> Either Point Point -> Number
-eix w acc = either (\v -> w * v.x) (\v -> (mouseOrBust acc.mousePosition).x - v.x)
+eix :: Number -> SilentNightAccumulator -> Either Point (Tuple Point Point) -> Number
+eix w acc = either (\v -> w * v.x) (\(Tuple _ v) -> (mouseOrBust acc.mousePosition).x - v.x)
 
-eiy :: Number -> SilentNightAccumulator -> Either Point Point -> Number
-eiy h acc = either (\v -> h * v.y) (\v -> (mouseOrBust acc.mousePosition).y - v.y)
+eiy :: Number -> SilentNightAccumulator -> Either Point (Tuple Point Point) -> Number
+eiy h acc = either (\v -> h * v.y) (\(Tuple _ v) -> (mouseOrBust acc.mousePosition).y - v.y)
 
 nothingize :: forall a. a -> Maybe a
 nothingize = const Nothing
@@ -1039,6 +1025,34 @@ paintShrinks w h acc i shrinkF curPos time =
         )
 
 ----
+-- motion
+motionMaker :: PlayerEvent -> Number -> Number -> Number -> SilentNightAccumulator -> SilentNightPlayerT -> Drawing -> Number -> MakeCanvasT
+motionMaker newM xp yp cw acc i instr time =
+  pure
+    $ Tuple
+        ( acc
+            { activity =
+              SilentNightPlayer
+                ( i
+                    { playerEvents = [ newM ] <> drop 1 i.playerEvents
+                    }
+                )
+            }
+        )
+        ( instr
+            <> filled
+                ( fillColor
+                    ( whiteRGBA
+                        ( if time < i.eventStart + standardIntro + motionNormal then
+                            1.0
+                          else
+                            calcSlope (i.eventStart + standardIntro + motionNormal) 1.0 (i.eventStart + standardIntro + motionNormal + standardOutro) 0.0 time
+                        )
+                    )
+                )
+                (circle xp yp cw)
+        )
+
 makeCanvas :: SilentNightAccumulator -> Number -> MakeCanvasT
 makeCanvas acc time = do
   { w, h } <- ask
@@ -1454,7 +1468,7 @@ makeCanvas acc time = do
                     )
           in
             o
-        Motion lr ->
+        Motion prevT lr ->
           let
             cw = (min w h) / 16.0
 
@@ -1491,24 +1505,27 @@ makeCanvas acc time = do
                               (fillColor (whiteRGBA (min 1.0 $ (time - i.eventStart) / standardIntro)))
                               (circle xp yp cw)
                       )
-              | needsToFollow xp yp cw acc lr = nextMotion acc i (Right { x: (mouseOrBust acc.mousePosition).x - xp, y: (mouseOrBust acc.mousePosition).y - yp }) time
-              | needsToStopFollowing acc lr = nextMotion acc i (Left { x: xp / w, y: yp / h }) time
-              | otherwise =
-                pure
-                  $ Tuple acc
-                      ( instr
-                          <> filled
-                              ( fillColor
-                                  ( whiteRGBA
-                                      ( if time < i.eventStart + standardIntro + motionNormal then
-                                          1.0
-                                        else
-                                          calcSlope (i.eventStart + standardIntro + motionNormal) 1.0 (i.eventStart + standardIntro + motionNormal + standardOutro) 0.0 time
-                                      )
-                                  )
-                              )
-                              (circle xp yp cw)
-                      )
+              | needsToFollow xp yp cw acc lr =
+                let
+                  oss = { x: (mouseOrBust acc.mousePosition).x - xp, y: (mouseOrBust acc.mousePosition).y - yp }
+
+                  -- hack from poor design of either
+                  -- make cleaner eventually
+                  newPt' = Right (Tuple { x: 0.0, y: 0.0 } oss)
+
+                  newX = (eix w acc newPt')
+
+                  newY = (eiy h acc newPt')
+
+                  newPt = Right (Tuple { x: newX, y: newY } oss)
+                in
+                  motionMaker (Motion (Just { x: xp, y: yp }) newPt) newX newY cw acc i instr time
+              | needsToStopFollowing acc lr = let newPt = (Left { x: xp / w, y: yp / h }) in motionMaker (Motion (Just { x: xp, y: yp }) newPt) (eix w acc newPt) (eiy h acc newPt) cw acc i instr time
+              -- left should never happen here
+              -- code smell
+              -- refactor eventually
+              | acc.inClick = motionMaker (either (const $ Motion Nothing (Left { x: 0.0, y: 0.0 })) (\(Tuple old offset) -> Motion (Just old) (Right (Tuple { x: xp, y: yp } offset))) lr) xp yp cw acc i instr time
+              | otherwise = motionMaker (Motion prevT lr) xp yp cw acc i instr time
           in
             o
         Rise v ->
@@ -1759,7 +1776,7 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
 allPlayerEvent =
   [ Triangle (fill (const Nothing))
   , Square (fill (const Nothing))
-  , Motion (Left { x: 0.18, y: 0.18 })
+  , Motion Nothing (Left { x: 0.18, y: 0.18 })
   , Rise (fill (const Nothing))
   , Large Nil
   , Bells (L.fromFoldable $ A.replicate 24 Nil)
@@ -1786,25 +1803,25 @@ acx a =
     , eventStart: 0.0
     }
 
-acC = acx [ Triangle (fill $ const Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+acC = acx [ Triangle (fill $ const Nothing), Motion Nothing (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
-acD = acx [ Square (fill $ const Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+acD = acx [ Square (fill $ const Nothing), Motion Nothing (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
-acE = acx [ Motion (Left { x: 0.18, y: 0.18 }), Square (fill $ const Nothing) ] :: Activity
+acE = acx [ Motion Nothing (Left { x: 0.18, y: 0.18 }), Square (fill $ const Nothing) ] :: Activity
 
 acF = acx [ Rise (fill $ const Nothing), Square (fill $ const Nothing) ] :: Activity
 
-acG = acx [ Snow (L.fromFoldable $ A.replicate snowL Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+acG = acx [ Snow (L.fromFoldable $ A.replicate snowL Nothing), Motion Nothing (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
 acH = acx [ Shrink shrinkStart, Square (fill $ const Nothing) ] :: Activity
 
-acI = acx [ Bells (L.fromFoldable $ A.replicate 24 Nil), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+acI = acx [ Bells (L.fromFoldable $ A.replicate 24 Nil), Motion Nothing (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
-acJ = acx [ Large Nil, Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+acJ = acx [ Large Nil, Motion Nothing (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
-acK = acx [ Gears (fill $ const Nothing), Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+acK = acx [ Gears (fill $ const Nothing), Motion Nothing (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
-acL = acx [ Heart Nothing, Motion (Left { x: 0.18, y: 0.18 }) ] :: Activity
+acL = acx [ Heart Nothing, Motion Nothing (Left { x: 0.18, y: 0.18 }) ] :: Activity
 
 shuffle :: forall a. Array a -> Effect (Array a)
 shuffle x = go 0 x
@@ -1842,7 +1859,7 @@ main =
           { initiatedClick: false
           , curClickId: Nothing
           , mousePosition: Nothing
-          , activity: acH
+          , activity: acE
           , inClick: false
           , initiatedCoda: false
           , mainStarts: Nothing
