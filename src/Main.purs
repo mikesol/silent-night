@@ -1520,7 +1520,7 @@ makeCanvas acc time = do
                   newPt = Right (Tuple { x: newX, y: newY } oss)
                 in
                   motionMaker (Motion (Just { x: xp, y: yp }) newPt) newX newY cw acc i instr time
-              | needsToStopFollowing acc lr = let newPt = (Left { x: xp / w, y: yp / h }) in motionMaker (Motion (Just { x: xp, y: yp }) newPt) (eix w acc newPt) (eiy h acc newPt) cw acc i instr time
+              | needsToStopFollowing acc lr = let newPt = (Left { x: xp / w, y: yp / h }) in motionMaker (Motion (Just (either (const $ { x: 0.0, y: 0.0 }) (\(Tuple v _) -> v) lr)) newPt) (eix w acc newPt) (eiy h acc newPt) cw acc i instr time
               -- left should never happen here
               -- code smell
               -- refactor eventually
