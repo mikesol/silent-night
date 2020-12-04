@@ -14,7 +14,7 @@ import Data.Int (floor, toNumber)
 import Data.Lens (_2, over)
 import Data.List (List(..), (:))
 import Data.List as L
-import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe, maybe')
+import Data.Maybe (Maybe(..), fromMaybe, fromMaybe', isJust, isNothing, maybe, maybe')
 import Data.Newtype (wrap)
 import Data.NonEmpty (NonEmpty, (:|))
 import Data.Profunctor (lcmap)
@@ -466,6 +466,7 @@ type SilentNightAccumulator
     , activity :: Activity
     , initiatedCoda :: Boolean
     , mainStarts :: Maybe Number
+    , introEnds :: Maybe Number
     }
 
 inRect :: Point -> Rectangle -> Boolean
@@ -1095,7 +1096,7 @@ makeCanvas acc time = do
         if time > i.startsAt + circleFlyAway then
           makeCanvas
             ( acc
-                { mainStarts = Just time
+                { introEnds = Just time
                 , activity =
                   SilentNightPlayer
                     { verse: Verse1
@@ -1748,6 +1749,7 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
         , curClickId = _.id <$> head p.interactions
         , initiatedCoda = inCoda
         , activity = codizedActivity
+        , mainStarts = if acc'.mainStarts /= Nothing then acc'.mainStarts else (\t -> t + ((6.0 - ((t * tempo / 60.0) % 6.0)) * 60.0 / tempo)) <$> acc'.introEnds
         }
 
     (Tuple vizAcc cvs) = runReader (makeCanvas acc time) { evts, w: ci.w, h: ci.h }
@@ -1844,6 +1846,7 @@ main =
           , inClick: false
           , initiatedCoda: false
           , mainStarts: Nothing
+          , introEnds: Nothing
           }
     , exporter = defaultExporter
     , buffers =
