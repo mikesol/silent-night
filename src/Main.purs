@@ -16,7 +16,7 @@ import Data.List (List(..), (:))
 import Data.List as L
 import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe, maybe')
 import Data.Newtype (wrap)
-import Data.NonEmpty (NonEmpty, (:|))
+import Data.NonEmpty (NonEmpty(..), (:|))
 import Data.Profunctor (lcmap)
 import Data.String (Pattern(..), indexOf)
 import Data.Traversable (sequence)
@@ -86,6 +86,154 @@ timeToMusicalInfo t =
     beat = beats - ((toNumber measure) * 3.0)
   in
     { measure, beat }
+
+data PitchClass
+  = Ab
+  | A
+  | Bb
+  | Cb
+  | C
+  | Db
+  | D
+  | Eb
+  | Fb
+  | F
+  | Gb
+  | G
+
+derive instance eqPitchClass :: Eq PitchClass
+
+codaStarts = musicalInfoToTime { measure: 82, beat: 0.0 } :: Number
+
+measureMinus :: MusicalInfo -> Int -> MusicalInfo
+measureMinus { measure, beat } i = { measure: measure - i, beat }
+
+introSafeSustainAb :: MusicalInfo -> NonEmpty List PitchClass
+introSafeSustainAb ma
+  | ma.beat < 2.0 = Ab :| C : Eb : Nil
+  | ma.beat < 2.0 = Ab :| Ab : C : Eb : Eb : Nil
+  | otherwise = Ab :| Eb : Nil
+
+introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+introSafeSustainDb ma mb
+  | ma.measure == mb.measure = Ab :| Ab : Bb : Db : Db : F : Nil
+  | otherwise = Ab :| Ab : Ab : Bb : Nil
+
+introSafeSustain :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+introSafeSustain ma mb
+  | ma.measure == 0 || ma.measure == 2 = introSafeSustainAb ma
+  | otherwise = introSafeSustainDb ma mb
+
+endSafeSustain :: Number -> NonEmpty List PitchClass
+endSafeSustain a
+  | a < 1.5 = Ab :| C : Eb : Eb : Nil
+  | a < 3.0 = Ab :| Eb : Nil
+  | a < 7.0 = Eb :| G : Bb : Nil
+  | otherwise = Ab :| Ab : Bb : C : C : Eb : Eb : F : G : Nil
+
+middleSafeSustain_0_4 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_0_4 ma mb
+  | ma.measure > 2 && mb.measure < 4 = Ab :| Bb : C : Eb : G : Nil
+  | mb.measure < 4 = Ab :| C : Eb : G : Nil
+  | ma.measure > 2 && mb.measure < 8 = Bb :| Eb : Eb : G : Nil
+  | otherwise = Ab :| Nil
+
+middleSafeSustain_4_6 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_4_6 ma mb
+  | ma.measure == 5 && mb.measure < 6 = Eb :| G : Bb : Db : Nil
+  | mb.measure < 6 = Eb :| G : Bb : Nil
+  | mb.measure < 8 = Eb :| Eb : G : Bb : Nil
+  | otherwise = Eb :| Nil
+
+middleSafeSustain_6_8 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_6_8 ma mb
+  | mb.measure < 8 = Ab :| Ab : Bb : C : C : Eb : G : Nil
+  | otherwise = Ab :| Eb : Nil
+
+middleSafeSustain_8_10 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_8_10 ma mb
+  | mb.measure < 10 = Db :| Db : F : F : Ab : Ab : Bb : Nil
+  | otherwise = Ab :| Ab : Bb : Nil
+
+middleSafeSustain_10_12 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_10_12 ma mb
+  | mb.measure < 12 = Ab :| Ab : Bb : C : C : Eb : G : Nil
+  | otherwise = Ab :| Eb : Nil
+
+middleSafeSustain_12_14 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_12_14 ma mb
+  | mb.measure < 14 = Db :| Db : F : F : Ab : Ab : Bb : Nil
+  | otherwise = Ab :| Ab : Bb : Nil
+
+middleSafeSustain_14_16 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_14_16 ma mb
+  | mb.measure < 16 = Ab :| Ab : Bb : C : C : Eb : G : Nil
+  | otherwise = Ab :| Eb : Nil
+
+middleSafeSustain_16_18 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_16_18 ma mb
+  | mb.measure < 19 = Eb :| G : Bb : Nil
+  | otherwise = Eb :| Bb : Nil
+
+middleSafeSustain_18_19 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_18_19 ma mb
+  | mb.measure < 19 = Ab :| Ab : C : C : Eb : Eb : G : Nil
+  | otherwise = Ab :| Eb : Nil
+
+middleSafeSustain_19_20 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_19_20 ma mb
+  | mb.measure < 20 = Db :| F : Ab : C : Nil
+  | otherwise = Ab :| Ab : C : Nil
+
+middleSafeSustain_20_21 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_20_21 ma mb
+  | mb.measure < 21 = Ab :| C : Eb : Nil
+  | otherwise = Ab :| Eb : Nil
+
+middleSafeSustain_21_22 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain_21_22 ma mb = Eb :| G : Bb : Nil
+
+middleSafeSustain_22_23 = const introSafeSustainAb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+
+middleSafeSustain_23_24 = introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+
+middleSafeSustain_24_25 = const introSafeSustainAb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+
+middleSafeSustain_25_26 = introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+
+middleSafeSustain :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+middleSafeSustain ma mb
+  | ma.measure < 4 = middleSafeSustain_0_4 ma mb
+  | ma.measure < 6 = middleSafeSustain_4_6 ma mb
+  | ma.measure < 8 = middleSafeSustain_6_8 ma mb
+  | ma.measure < 10 = middleSafeSustain_8_10 ma mb
+  | ma.measure < 12 = middleSafeSustain_10_12 ma mb
+  | ma.measure < 14 = middleSafeSustain_12_14 ma mb
+  | ma.measure < 16 = middleSafeSustain_14_16 ma mb
+  | ma.measure < 18 = middleSafeSustain_16_18 ma mb
+  | ma.measure < 19 = middleSafeSustain_18_19 ma mb
+  | ma.measure < 20 = middleSafeSustain_19_20 ma mb
+  | ma.measure < 21 = middleSafeSustain_20_21 ma mb
+  | ma.measure < 22 = middleSafeSustain_21_22 ma mb
+  | ma.measure < 23 = middleSafeSustain_22_23 ma mb
+  | ma.measure < 24 = middleSafeSustain_23_24 ma mb
+  | ma.measure < 25 = middleSafeSustain_24_25 ma mb
+  | ma.measure < 26 = middleSafeSustain_25_26 ma mb
+  | otherwise = Ab :| Nil
+
+safeSustain :: Number -> Number -> NonEmpty List PitchClass
+safeSustain a b =
+  let
+    ma = timeToMusicalInfo a
+
+    mb = timeToMusicalInfo b
+
+    sus
+      | ma.measure < 4 = introSafeSustain ma mb
+      | ma.measure >= 82 = endSafeSustain (a - codaStarts)
+      | otherwise = middleSafeSustain (measureMinus (measureMinus ma $ 26 * (ma.measure `div` 26)) 4) (measureMinus (measureMinus mb $ 26 * (ma.measure `div` 26)) 4)
+  in
+    sus
 
 ------
 conv440 :: Number -> Number
