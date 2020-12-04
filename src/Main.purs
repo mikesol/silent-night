@@ -8,7 +8,7 @@ import Control.Promise (toAffE)
 import Data.Array (catMaybes, drop, filter, fold, head, range, zip)
 import Data.Array as A
 import Data.DateTime.Instant (unInstant)
-import Data.Either (Either(..), either, isRight)
+import Data.Either (Either(..), either)
 import Data.Foldable (class Foldable, foldl, traverse_)
 import Data.Int (floor, toNumber)
 import Data.Lens (_2, over)
