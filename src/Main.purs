@@ -8,7 +8,7 @@ import Control.Promise (toAffE)
 import Data.Array (catMaybes, drop, filter, fold, head, range, zip)
 import Data.Array as A
 import Data.DateTime.Instant (unInstant)
-import Data.Either (Either(..), either)
+import Data.Either (Either(..), either, isRight)
 import Data.Foldable (class Foldable, foldl, traverse_)
 import Data.Int (floor, toNumber)
 import Data.Lens (_2, over)
@@ -20,7 +20,7 @@ import Data.NonEmpty (NonEmpty, (:|))
 import Data.Profunctor (lcmap)
 import Data.String (Pattern(..), indexOf)
 import Data.Traversable (sequence)
-import Data.Tuple (Tuple(..), fst)
+import Data.Tuple (Tuple(..), fst, snd)
 import Data.Typelevel.Num (D2, D3, D4, D6, d0, d1, d2, d3, d4, d5)
 import Data.Vec (Vec, empty, fill, (+>))
 import Data.Vec as V
@@ -49,11 +49,11 @@ import Web.TouchEvent.TouchList as TL
 import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as ME
 
--- Shrink :: Recalibration
 -- Triangle :: Change so that it is playing at 8th rhythm, mute
 -- Square :: Middle motion when clicked, final is explosion outward
 -- Gears :: Accelerate + different directions, rhythm is the one that guides beat
 -- Rise :: Six different instruments rising, pin to pitch
+-- Shrink :: Recalibration
 -- Large :: Subtract from thick pad
 -- Bells :: Keyboard with changing harmony
 -- Snow :: Bells
@@ -792,11 +792,17 @@ mouseOrBust = fromMaybe { x: 0.0, y: 0.0 }
 
 riseXP = [ 1.0 / 12.0, 3.0 / 12.0, 5.0 / 12.0, 7.0 / 12.0, 9.0 / 12.0, 11.0 / 12.0 ] :: Array Number
 
+calibrateX :: SilentNightAccumulator -> Point -> Number
+calibrateX acc v = (mouseOrBust acc.mousePosition).x - v.x
+
+calibrateY :: SilentNightAccumulator -> Point -> Number
+calibrateY acc v = (mouseOrBust acc.mousePosition).y - v.y
+
 eix :: Number -> SilentNightAccumulator -> Either Point (Tuple Point Point) -> Number
-eix w acc = either (\v -> w * v.x) (\(Tuple _ v) -> (mouseOrBust acc.mousePosition).x - v.x)
+eix w acc = either (\v -> w * v.x) (calibrateX acc <<< snd)
 
 eiy :: Number -> SilentNightAccumulator -> Either Point (Tuple Point Point) -> Number
-eiy h acc = either (\v -> h * v.y) (\(Tuple _ v) -> (mouseOrBust acc.mousePosition).y - v.y)
+eiy h acc = either (\v -> h * v.y) (calibrateY acc <<< snd)
 
 nothingize :: forall a. a -> Maybe a
 nothingize = const Nothing
@@ -1052,6 +1058,17 @@ motionMaker newM xp yp cw acc i instr time =
                 )
                 (circle xp yp cw)
         )
+
+gearDir0 = true :: Boolean
+
+gearDir1 = false :: Boolean
+
+gearDir2 = true :: Boolean
+
+gearDir3 = false :: Boolean
+
+gearSpinF :: Number -> Number
+gearSpinF t = t `pow` (1.1 + 0.1 * sin (pi * t))
 
 makeCanvas :: SilentNightAccumulator -> Number -> MakeCanvasT
 makeCanvas acc time = do
@@ -1449,20 +1466,20 @@ makeCanvas acc time = do
                   $ ( Tuple acc
                         $ fold
                             ( map
-                                ( \(Tuple (Tuple mcw gp) n) ->
+                                ( \(Tuple (Tuple mcw gp) (Tuple gd n)) ->
                                     let
                                       nowT = maybe 0.0 (\s -> (time - foldl max 0.0 s)) sqv
                                     in
                                       gear2arc (maybe 1.0 (\s -> let mx = foldl max 0.0 s in calcSlope mx 1.0 (mx + standardOutro) 0.0 time) sqv) mcw
                                         ( case n of
                                             Nothing -> gp
-                                            Just n' -> gp + (time - n')
+                                            Just n' -> (if gd then (+) else (-)) gp (gearSpinF (time - n'))
                                         )
                                 )
-                                [ Tuple (Tuple cw0 cg0) gear0
-                                , Tuple (Tuple cw1 cg1) gear1
-                                , Tuple (Tuple cw2 cg2) gear2
-                                , Tuple (Tuple cw3 cg3) gear3
+                                [ Tuple (Tuple cw0 cg0) (Tuple gearDir0 gear0)
+                                , Tuple (Tuple cw1 cg1) (Tuple gearDir1 gear1)
+                                , Tuple (Tuple cw2 cg2) (Tuple gearDir2 gear2)
+                                , Tuple (Tuple cw3 cg3) (Tuple gearDir3 gear3)
                                 ]
                             )
                     )
@@ -1505,27 +1522,22 @@ makeCanvas acc time = do
                               (fillColor (whiteRGBA (min 1.0 $ (time - i.eventStart) / standardIntro)))
                               (circle xp yp cw)
                       )
-              | needsToFollow xp yp cw acc lr =
-                let
-                  oss = { x: (mouseOrBust acc.mousePosition).x - xp, y: (mouseOrBust acc.mousePosition).y - yp }
+              | otherwise = case lr of
+                Left _ ->
+                  if needsToFollow xp yp cw acc lr then
+                    let
+                      oss = { x: (mouseOrBust acc.mousePosition).x - xp, y: (mouseOrBust acc.mousePosition).y - yp }
 
-                  -- hack from poor design of either
-                  -- make cleaner eventually
-                  newPt' = Right (Tuple { x: 0.0, y: 0.0 } oss)
+                      newX = calibrateX acc oss
 
-                  newX = (eix w acc newPt')
+                      newY = calibrateY acc oss
 
-                  newY = (eiy h acc newPt')
-
-                  newPt = Right (Tuple { x: newX, y: newY } oss)
-                in
-                  motionMaker (Motion (Just { x: xp, y: yp }) newPt) newX newY cw acc i instr time
-              | needsToStopFollowing acc lr = let newPt = (Left { x: xp / w, y: yp / h }) in motionMaker (Motion (Just (either (const $ { x: 0.0, y: 0.0 }) (\(Tuple v _) -> v) lr)) newPt) (eix w acc newPt) (eiy h acc newPt) cw acc i instr time
-              -- left should never happen here
-              -- code smell
-              -- refactor eventually
-              | acc.inClick = motionMaker (either (const $ Motion Nothing (Left { x: 0.0, y: 0.0 })) (\(Tuple old offset) -> Motion (Just old) (Right (Tuple { x: xp, y: yp } offset))) lr) xp yp cw acc i instr time
-              | otherwise = motionMaker (Motion prevT lr) xp yp cw acc i instr time
+                      newPt = Right (Tuple { x: newX, y: newY } oss)
+                    in
+                      motionMaker (Motion (Just { x: xp, y: yp }) newPt) newX newY cw acc i instr time
+                  else
+                    motionMaker (Motion prevT lr) xp yp cw acc i instr time
+                Right (Tuple old offset) -> if needsToStopFollowing acc lr then let newPt = (Left { x: xp / w, y: yp / h }) in motionMaker (Motion (Just old) newPt) (eix w acc newPt) (eiy h acc newPt) cw acc i instr time else motionMaker (Motion (Just old) (Right (Tuple { x: xp, y: yp } offset))) xp yp cw acc i instr time
           in
             o
         Rise v ->
@@ -1859,7 +1871,7 @@ main =
           { initiatedClick: false
           , curClickId: Nothing
           , mousePosition: Nothing
-          , activity: acE
+          , activity: acK
           , inClick: false
           , initiatedCoda: false
           , mainStarts: Nothing
