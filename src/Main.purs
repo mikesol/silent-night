@@ -14,7 +14,7 @@ import Data.Int (floor, toNumber)
 import Data.Lens (_2, over)
 import Data.List (List(..), (:))
 import Data.List as L
-import Data.Maybe (Maybe(..), fromMaybe, fromMaybe', isJust, isNothing, maybe, maybe')
+import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe, maybe')
 import Data.Newtype (wrap)
 import Data.NonEmpty (NonEmpty, (:|))
 import Data.Profunctor (lcmap)
@@ -49,8 +49,8 @@ import Web.TouchEvent.TouchList as TL
 import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as ME
 
--- Triangle :: Change so that it is playing at 8th rhythm, mute
 -- Square :: Middle motion when clicked, final is explosion outward
+-- Triangle :: Change so that it is playing at 8th rhythm, mute
 -- Gears :: Accelerate + different directions, rhythm is the one that guides beat
 -- Rise :: Six different instruments rising, pin to pitch
 -- Shrink :: Recalibration
@@ -1262,13 +1262,17 @@ makeCanvas acc time = do
                   $ ( Tuple acc
                         $ fold
                             ( map
-                                ( \(Tuple pd n) ->
+                                ( \(Tuple pd (Tuple bt n)) ->
                                     let
                                       pdpi = (pd + maybe 0.0 (\s -> (time - foldl max 0.0 s) `pow` 1.6) sqv) * pi
 
-                                      r = case n of
-                                        Nothing -> cw
-                                        Just n' -> pressEffect cw standardPress (time - n')
+                                      mif = timeToMusicalInfo (time - quaver)
+
+                                      r
+                                        | mif.beat - bt < 0.3 = cw
+                                        | mif.beat - bt < 0.5 = cw * (1.0 + calcSlope 0.3 0.0 0.5 0.3 (mif.beat - bt))
+                                        | mif.beat - bt < 1.0 = cw * (1.0 + calcSlope 0.5 0.3 1.0 0.0 (mif.beat - bt))
+                                        | otherwise = cw
                                     in
                                       filled
                                         ( fillColor
@@ -1285,9 +1289,9 @@ makeCanvas acc time = do
                                             r
                                         )
                                 )
-                                [ Tuple 0.0 top
-                                , Tuple (2.0 / 3.0) left
-                                , Tuple (4.0 / 3.0) right
+                                [ Tuple 0.0 (Tuple 0.0 top)
+                                , Tuple (2.0 / 3.0) (Tuple 2.0 left)
+                                , Tuple (4.0 / 3.0) (Tuple 1.0 right)
                                 ]
                             )
                     )
@@ -1873,7 +1877,7 @@ main =
           { initiatedClick: false
           , curClickId: Nothing
           , mousePosition: Nothing
-          , activity: acA
+          , activity: Intro
           , inClick: false
           , initiatedCoda: false
           , mainStarts: Nothing
