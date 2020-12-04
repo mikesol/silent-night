@@ -50,7 +50,6 @@ import Web.UIEvent.MouseEvent (MouseEvent)
 import Web.UIEvent.MouseEvent as ME
 
 -- Shrink :: Recalibration
--- Motion :: Wind
 -- Triangle :: Change so that it is playing at 8th rhythm, mute
 -- Square :: Middle motion when clicked, final is explosion outward
 -- Gears :: Accelerate + different directions, rhythm is the one that guides beat
@@ -58,6 +57,7 @@ import Web.UIEvent.MouseEvent as ME
 -- Large :: Subtract from thick pad
 -- Bells :: Keyboard with changing harmony
 -- Snow :: Bells
+-- Motion :: Wind
 -- Heart :: Beating
 tempo = 72.0 :: Number
 
