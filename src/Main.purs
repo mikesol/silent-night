@@ -726,6 +726,8 @@ gearStay = 4.0 :: Number
 
 shrinkNormal = 18.0 :: Number
 
+squareTravel = 1.0 :: Number
+
 heartNormal = 10.0 :: Number
 
 snowMin = 6.0 :: Number
@@ -1320,7 +1322,7 @@ makeCanvas acc time = do
             nextSquare = nextObj Square
 
             o
-              | maybe false (\s -> time > standardOutro + foldl max 0.0 s) sqv = newCanvas i acc time
+              | maybe false (\s -> time > standardOutro + squareTravel + foldl max 0.0 s) sqv = newCanvas i acc time
               | time < i.eventStart + standardIntro =
                 pure
                   $ ( Tuple acc
@@ -1356,7 +1358,7 @@ makeCanvas acc time = do
                             ( map
                                 ( \(Tuple { x0, y0, x1, y1 } n) ->
                                     let
-                                      nowT = maybe 0.0 (\s -> (time - foldl max 0.0 s)) sqv
+                                      sqvT = maybe 0.0 (\s -> (time - foldl max 0.0 s)) sqv
 
                                       r = case n of
                                         Nothing -> cw
@@ -1372,8 +1374,14 @@ makeCanvas acc time = do
                                             )
                                         )
                                         ( circle
-                                            (w * calcSlope 0.0 x0 standardOutro x1 nowT)
-                                            (h * calcSlope 0.0 y0 standardOutro y1 nowT)
+                                            ( case n of
+                                                Nothing -> x0 * w
+                                                Just n' -> w * (if (sqvT < squareTravel) then (calcSlope n' x0 (n' + squareTravel) 0.5 (min (n' + squareTravel) time)) else (calcSlope squareTravel (0.5) (standardOutro + squareTravel) x1 sqvT))
+                                            )
+                                            ( case n of
+                                                Nothing -> y0 * h
+                                                Just n' -> h * (if (sqvT < squareTravel) then (calcSlope n' y0 (n' + squareTravel) 0.5 (min (n' + squareTravel) time)) else (calcSlope squareTravel (0.5) (standardOutro + squareTravel) y1 sqvT))
+                                            )
                                             r
                                         )
                                 )
