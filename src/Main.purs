@@ -16,7 +16,7 @@ import Data.List (List(..), (:))
 import Data.List as L
 import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe, maybe')
 import Data.Newtype (wrap)
-import Data.NonEmpty (NonEmpty(..), (:|))
+import Data.NonEmpty (NonEmpty, (:|))
 import Data.Profunctor (lcmap)
 import Data.String (Pattern(..), indexOf)
 import Data.Traversable (sequence)
@@ -721,7 +721,7 @@ bellsNormal = 18.0 :: Number
 
 riseNormal = 12.0 :: Number
 
-shrinkNormal = 16.0 :: Number
+shrinkNormal = 18.0 :: Number
 
 heartNormal = 10.0 :: Number
 
