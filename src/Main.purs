@@ -722,6 +722,8 @@ bellsNormal = 18.0 :: Number
 
 riseNormal = 12.0 :: Number
 
+gearStay = 4.0 :: Number
+
 shrinkNormal = 18.0 :: Number
 
 heartNormal = 10.0 :: Number
@@ -1068,7 +1070,7 @@ gearDir2 = true :: Boolean
 gearDir3 = false :: Boolean
 
 gearSpinF :: Number -> Number
-gearSpinF t = t `pow` (1.1 + 0.1 * sin (pi * t))
+gearSpinF t = 0.8 * t + (0.2 * (t `pow` 2.0)) -- t `pow` (1.3 + 0.3 * sin (0.5 * pi * t))
 
 makeCanvas :: SilentNightAccumulator -> Number -> MakeCanvasT
 makeCanvas acc time = do
@@ -1439,7 +1441,7 @@ makeCanvas acc time = do
                 (arc (w / 2.0) (h / 2.0) gp (gp + (calcSlope 0.0 1.0 w 2.0 mcw * pi)) mcw)
 
             o
-              | maybe false (\s -> time > standardOutro + foldl max 0.0 s) sqv = newCanvas i acc time
+              | maybe false (\s -> time > standardOutro + gearStay + foldl max 0.0 s) sqv = newCanvas i acc time
               | time < i.eventStart + standardIntro =
                 pure
                   $ ( Tuple acc
@@ -1470,7 +1472,7 @@ makeCanvas acc time = do
                                     let
                                       nowT = maybe 0.0 (\s -> (time - foldl max 0.0 s)) sqv
                                     in
-                                      gear2arc (maybe 1.0 (\s -> let mx = foldl max 0.0 s in calcSlope mx 1.0 (mx + standardOutro) 0.0 time) sqv) mcw
+                                      gear2arc (maybe 1.0 (\s -> let mx = foldl max 0.0 s in (max 0.0 (min 1.0 (calcSlope (mx + gearStay) 1.0 (mx + gearStay + standardOutro) 0.0 time)))) sqv) mcw
                                         ( case n of
                                             Nothing -> gp
                                             Just n' -> (if gd then (+) else (-)) gp (gearSpinF (time - n'))
@@ -1712,7 +1714,7 @@ makeCanvas acc time = do
 
             spn = ced - cst
 
-            cpos = calcSlope 0.0 cst 1.0 ced (pnCurve 1.4 $ (time - i.eventStart) / largeCrossing)
+            cpos = calcSlope 0.0 cst 1.0 ced (pnCurve 1.2 $ (time - i.eventStart) / largeCrossing)
 
             newV = maybe v (\mp -> if acc.initiatedClick then (Tuple mp time) : v else v) acc.mousePosition
 
@@ -1871,7 +1873,7 @@ main =
           { initiatedClick: false
           , curClickId: Nothing
           , mousePosition: Nothing
-          , activity: acK
+          , activity: acA
           , inClick: false
           , initiatedCoda: false
           , mainStarts: Nothing
