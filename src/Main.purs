@@ -28,6 +28,7 @@ import Data.Tuple (Tuple(..), fst, snd, uncurry)
 import Data.Typelevel.Num (D2, D3, D4, D6, d0, d1, d2, d3, d4, d5)
 import Data.Vec (Vec, empty, fill, (+>))
 import Data.Vec as V
+import Debug.Trace (spy)
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), delay, try)
 import Effect.Exception (Error)
@@ -112,30 +113,25 @@ pure2 = pure <<< pure
 
 metronomeClick :: Number -> Number -> MusicM AudioListD2
 metronomeClick s gp = do
-  { time } <- ask
+  let
+    bo = beatGapToStartOffsetAsParam s gp
   pure2
-    $ playBufT_ ("buffer" <> show s) "metronome-wb" (beatGapToStartOffsetAsParam s gp)
-
-startM1 = { measure: 1, beat: 0.0 }
-
-startM2 = { measure: 2, beat: 0.0 }
-
-startM3 = { measure: 3, beat: 0.0 }
+    $ playBufT_ ("buffer" <> show s) "metronome-wb" bo
 
 metronome :: MusicM AudioListD2
 metronome = do
   { musicalInfo } <- ask
   let
-    mmm3 = musicalInfo { measure = musicalInfo.measure `mod` 3 }
+    mmm1 = musicalInfo { measure = musicalInfo.measure `mod` 1 }
   let
     o
-      | musicalInfo.measure == 0 = metronomeClick 0.9 0.0
-      | Just gap <- startM3 |< mmm3 = metronomeClick 0.9 gap
-      | mmm3 ||< startM1 = metronomeClick 0.9 0.0
-      | Just gap <- startM1 |< mmm3
-      , mmm3 ||< startM2 = metronomeClick 1.1 gap
-      | Just gap <- startM2 |< mmm3
-      , mmm3 ||< startM3 = metronomeClick 1.6 gap
+      | musicalInfo.measure == 0 && musicalInfo.beat < 0.5 = metronomeClick 0.9 0.0
+      | Just gap <- startM1 |< mmm1 = metronomeClick 0.9 gap
+      | mmm1 ||< startM0_1 = metronomeClick 0.9 0.0
+      | Just gap <- startM0_1 |< mmm1
+      , mmm1 ||< startM0_2 = metronomeClick 1.1 gap
+      | Just gap <- startM0_2 |< mmm1
+      , mmm1 ||< startM1 = metronomeClick 1.6 gap
       | otherwise = pure Nil
   o
 
@@ -161,15 +157,21 @@ il2s IntroLoopE = "IntroLoopE"
 
 startM0 = mmi 0 0.0 :: MusicalInfo
 
+startM0_1 = mmi 0 1.0 :: MusicalInfo
+
+startM0_2 = mmi 0 2.0 :: MusicalInfo
+
+startM1 = mmi 1 0.0 :: MusicalInfo
+
+startM4 = mmi 4 0.0 :: MusicalInfo
+
+startM8 = mmi 8 0.0 :: MusicalInfo
+
 startM12 = mmi 12 0.0 :: MusicalInfo
 
-startM24 = mmi 24 0.0 :: MusicalInfo
+startM16 = mmi 16 0.0 :: MusicalInfo
 
-startM36 = mmi 36 0.0 :: MusicalInfo
-
-startM48 = mmi 42 0.0 :: MusicalInfo
-
-startM60 = mmi 60 0.0 :: MusicalInfo
+startM20 = mmi 20 0.0 :: MusicalInfo
 
 miGap :: MusicalInfo -> MusicalInfo -> Maybe Number
 miGap target atNow =
@@ -207,41 +209,44 @@ introLoopSingleton il gp = let ils = il2s il in pure $ playBufT_ ("buf" <> ils) 
 
 introLoopPlayer :: IntroLoop -> MusicM AudioListD2
 introLoopPlayer il = do
-  { musicalInfo: mi } <- ask
+  { musicalInfo } <- ask
   let
-    mmm40 = mi { measure = mi.measure `mod` 40 }
+    mmm40 = musicalInfo { measure = musicalInfo.measure `mod` 20 }
   let
     o
-      | mi.measure == 0 = pure <$> introLoopSingleton IntroLoopA 0.0
-      | Just gap <- startM60 |< mmm40 =
+      | musicalInfo ||< startM4 =
+        sequence
+          $ introLoopSingleton IntroLoopA 0.0
+          : Nil
+      | Just gap <- startM20 |< mmm40 =
         sequence
           $ introLoopSingleton IntroLoopA gap
           : introLoopSingleton IntroLoopE 0.0
           : Nil
-      | mmm40 ||< startM12 =
+      | mmm40 ||< startM4 =
         sequence
           $ introLoopSingleton IntroLoopA 0.0
           : introLoopSingleton IntroLoopE 0.0
           : Nil
-      | Just gap <- startM12 |< mmm40
-      , mmm40 ||< startM24 =
+      | Just gap <- startM4 |< mmm40
+      , mmm40 ||< startM8 =
         sequence
           $ introLoopSingleton IntroLoopB gap
           : introLoopSingleton IntroLoopA 0.0
           : Nil
-      | Just gap <- startM24 |< mmm40
-      , mmm40 ||< startM36 =
+      | Just gap <- startM8 |< mmm40
+      , mmm40 ||< startM12 =
         sequence
           $ introLoopSingleton IntroLoopC gap
           : introLoopSingleton IntroLoopB 0.0
           : Nil
-      | Just gap <- startM36 |< mmm40
-      , mmm40 ||< startM48 =
+      | Just gap <- startM12 |< mmm40
+      , mmm40 ||< startM16 =
         sequence
           $ introLoopSingleton IntroLoopD gap
           : introLoopSingleton IntroLoopC 0.0
           : Nil
-      | Just gap <- startM48 |< mmm40 =
+      | Just gap <- startM16 |< mmm40 =
         sequence
           $ introLoopSingleton IntroLoopE gap
           : introLoopSingleton IntroLoopD 0.0
@@ -2469,10 +2474,10 @@ main =
     , buffers =
       makeBuffersKeepingCache
         [ Tuple "metronome-wb" "https://freesound.org/data/previews/53/53403_400592-lq.mp3"
-        , Tuple "IntroLoopA" "https://freesound.org/data/previews/207/207956_19852-lq.mp3"
-        , Tuple "IntroLoopB" "https://freesound.org/data/previews/411/411089_5121236-lq.mp3"
-        , Tuple "IntroLoopC" "https://freesound.org/data/previews/267/267335_3112522-lq.mp3"
-        , Tuple "IntroLoopD" "https://freesound.org/data/previews/411/411231_5121236-lq.mp3"
+        , Tuple "IntroLoopA" "https://freesound.org/data/previews/183/183105_2394245-lq.mp3"
+        , Tuple "IntroLoopB" "https://freesound.org/data/previews/55/55958_692375-lq.mp3"
+        , Tuple "IntroLoopC" "https://freesound.org/data/previews/270/270156_1125482-lq.mp3"
+        , Tuple "IntroLoopD" "https://freesound.org/data/previews/183/183099_2394245-lq.mp3"
         , Tuple "IntroLoopE" "https://freesound.org/data/previews/155/155845_2045208-lq.mp3"
         ]
     }
