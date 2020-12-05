@@ -81,17 +81,10 @@ silentNightInMeasures = 26.0 :: Number -- includes 2m transition
 
 pieceInMeasures = measureDur * (silentNightInMeasures + silentNightInMeasures + silentNightInMeasures + introInMeasures + preCodaInMeasures) :: Number
 
-newtype MusicalInfo
-  = MusicalInfo
-  { measure :: Int
-  , beat :: Number
-  }
-
-instance musicalInfoEq :: Eq MusicalInfo where
-  eq (MusicalInfo a) (MusicalInfo b) = a.measure == b.measure && a.beat == b.beat
-
-instance musicalInfoOrd :: Ord MusicalInfo where
-  compare (MusicalInfo a) (MusicalInfo b) = let mc = compare a.measure b.measure in if mc == EQ then compare a.beat b.beat else mc
+type MusicalInfo
+  = { measure :: Int
+    , beat :: Number
+    }
 
 type VerseStarts
   = { one :: Maybe (Tuple Number VerseChoice) -- chosenAt choice
@@ -130,13 +123,13 @@ metronomeClick s i = do
 
 metronome :: MusicM AudioListD2
 metronome = do
-  { musicalInfo: (MusicalInfo { measure, beat }) } <- ask
+  { musicalInfo: { measure, beat } } <- ask
   let
     o
-      | beat + krt >= 1.0 && beat < 2.0 = metronomeClick 1.1 (musicalInfoToTime $ MusicalInfo { measure, beat: 1.0 })
-      | beat > 2.0 && beat - 3.0 + krt > 0.0 = metronomeClick 0.9 (musicalInfoToTime $ MusicalInfo { measure: measure + 1, beat: 0.0 })
-      | beat < 1.0 = metronomeClick 0.9 (musicalInfoToTime $ MusicalInfo { measure, beat: 0.0 })
-      | beat + krt >= 2.0 = metronomeClick 1.6 (musicalInfoToTime $ MusicalInfo { measure, beat: 2.0 })
+      | beat + krt >= 1.0 && beat < 2.0 = metronomeClick 1.1 (musicalInfoToTime { measure, beat: 1.0 })
+      | beat > 2.0 && beat - 3.0 + krt > 0.0 = metronomeClick 0.9 (musicalInfoToTime { measure: measure + 1, beat: 0.0 })
+      | beat < 1.0 = metronomeClick 0.9 (musicalInfoToTime { measure, beat: 0.0 })
+      | beat + krt >= 2.0 = metronomeClick 1.6 (musicalInfoToTime { measure, beat: 2.0 })
       | otherwise = pure Nil
   o
 
@@ -171,7 +164,7 @@ startM36 = mmi 36 0.0 :: MusicalInfo
 startM48 = mmi 42 0.0 :: MusicalInfo
 
 miGap :: MusicalInfo -> MusicalInfo -> Maybe Number
-miGap (MusicalInfo target) (MusicalInfo atNow) =
+miGap target atNow =
   let
     targetB = toNumber target.measure + atNow.beat
 
@@ -206,9 +199,9 @@ introLoopSingleton il gp = let ils = il2s il in pure $ playBufT_ ("buf" <> ils) 
 
 introLoopPlayer :: IntroLoop -> MusicM AudioListD2
 introLoopPlayer il = do
-  { musicalInfo: (MusicalInfo mi) } <- ask
+  { musicalInfo: mi } <- ask
   let
-    mmm40 = MusicalInfo $ mi { measure = mi.measure `mod` 40 }
+    mmm40 = mi { measure = mi.measure `mod` 40 }
   let
     o
       | mi.measure == 0 = pure <$> introLoopSingleton IntroLoopA 0.0
@@ -326,10 +319,10 @@ silentNight =
         ]
 
 mmi :: Int -> Number -> MusicalInfo
-mmi measure beat = MusicalInfo { measure, beat }
+mmi measure beat = { measure, beat }
 
 musicalInfoToTime :: MusicalInfo -> Number
-musicalInfoToTime (MusicalInfo { measure, beat }) = (toNumber measure * 3.0 + beat) * 60.0 / tempo
+musicalInfoToTime { measure, beat } = (toNumber measure * 3.0 + beat) * 60.0 / tempo
 
 timeToMusicalInfo :: Number -> MusicalInfo
 timeToMusicalInfo t =
@@ -340,7 +333,7 @@ timeToMusicalInfo t =
 
     beat = beats - ((toNumber measure) * 3.0)
   in
-    MusicalInfo { measure, beat }
+    { measure, beat }
 
 data PitchClass
   = Ab
@@ -358,26 +351,26 @@ data PitchClass
 
 derive instance eqPitchClass :: Eq PitchClass
 
-codaStarts = musicalInfoToTime (MusicalInfo { measure: 82, beat: 0.0 }) :: Number
+codaStarts = musicalInfoToTime { measure: 82, beat: 0.0 } :: Number
 
 measureMinus :: MusicalInfo -> Int -> MusicalInfo
-measureMinus (MusicalInfo { measure, beat }) i = MusicalInfo { measure: measure - i, beat }
+measureMinus { measure, beat } i = { measure: measure - i, beat }
 
 introSafeSustainAb :: MusicalInfo -> NonEmpty List PitchClass
-introSafeSustainAb (MusicalInfo ma)
+introSafeSustainAb ma
   | ma.beat < 2.0 = Ab :| C : Eb : Nil
   | ma.beat < 2.0 = Ab :| Ab : C : Eb : Eb : Nil
   | otherwise = Ab :| Eb : Nil
 
 introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-introSafeSustainDb (MusicalInfo ma) (MusicalInfo mb)
+introSafeSustainDb ma mb
   | ma.measure == mb.measure = Ab :| Ab : Bb : Db : Db : F : Nil
   | otherwise = Ab :| Ab : Ab : Bb : Nil
 
 introSafeSustain :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-introSafeSustain (MusicalInfo ma) (MusicalInfo mb)
-  | ma.measure == 0 || ma.measure == 2 = introSafeSustainAb (MusicalInfo ma)
-  | otherwise = introSafeSustainDb (MusicalInfo ma) (MusicalInfo mb)
+introSafeSustain ma mb
+  | ma.measure == 0 || ma.measure == 2 = introSafeSustainAb ma
+  | otherwise = introSafeSustainDb ma mb
 
 endSafeSustain :: Number -> NonEmpty List PitchClass
 endSafeSustain a
@@ -387,66 +380,66 @@ endSafeSustain a
   | otherwise = Ab :| Ab : Bb : C : C : Eb : Eb : F : G : Nil
 
 middleSafeSustain_0_4 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_0_4 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_0_4 ma mb
   | ma.measure > 2 && mb.measure < 4 = Ab :| Bb : C : Eb : G : Nil
   | mb.measure < 4 = Ab :| C : Eb : G : Nil
   | ma.measure > 2 && mb.measure < 8 = Bb :| Eb : Eb : G : Nil
   | otherwise = Ab :| Nil
 
 middleSafeSustain_4_6 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_4_6 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_4_6 ma mb
   | ma.measure == 5 && mb.measure < 6 = Eb :| G : Bb : Db : Nil
   | mb.measure < 6 = Eb :| G : Bb : Nil
   | mb.measure < 8 = Eb :| Eb : G : Bb : Nil
   | otherwise = Eb :| Nil
 
 middleSafeSustain_6_8 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_6_8 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_6_8 ma mb
   | mb.measure < 8 = Ab :| Ab : Bb : C : C : Eb : G : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_8_10 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_8_10 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_8_10 ma mb
   | mb.measure < 10 = Db :| Db : F : F : Ab : Ab : Bb : Nil
   | otherwise = Ab :| Ab : Bb : Nil
 
 middleSafeSustain_10_12 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_10_12 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_10_12 ma mb
   | mb.measure < 12 = Ab :| Ab : Bb : C : C : Eb : G : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_12_14 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_12_14 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_12_14 ma mb
   | mb.measure < 14 = Db :| Db : F : F : Ab : Ab : Bb : Nil
   | otherwise = Ab :| Ab : Bb : Nil
 
 middleSafeSustain_14_16 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_14_16 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_14_16 ma mb
   | mb.measure < 16 = Ab :| Ab : Bb : C : C : Eb : G : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_16_18 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_16_18 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_16_18 ma mb
   | mb.measure < 19 = Eb :| G : Bb : Nil
   | otherwise = Eb :| Bb : Nil
 
 middleSafeSustain_18_19 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_18_19 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_18_19 ma mb
   | mb.measure < 19 = Ab :| Ab : C : C : Eb : Eb : G : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_19_20 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_19_20 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_19_20 ma mb
   | mb.measure < 20 = Db :| F : Ab : C : Nil
   | otherwise = Ab :| Ab : C : Nil
 
 middleSafeSustain_20_21 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_20_21 (MusicalInfo ma) (MusicalInfo mb)
+middleSafeSustain_20_21 ma mb
   | mb.measure < 21 = Ab :| C : Eb : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_21_22 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_21_22 (MusicalInfo ma) (MusicalInfo mb) = Eb :| G : Bb : Nil
+middleSafeSustain_21_22 ma mb = Eb :| G : Bb : Nil
 
 middleSafeSustain_22_23 = const introSafeSustainAb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
 
@@ -457,36 +450,36 @@ middleSafeSustain_24_25 = const introSafeSustainAb :: MusicalInfo -> MusicalInfo
 middleSafeSustain_25_26 = introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
 
 middleSafeSustain :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain ma@(MusicalInfo ma') mb
-  | ma'.measure < 4 = middleSafeSustain_0_4 ma mb
-  | ma'.measure < 6 = middleSafeSustain_4_6 ma mb
-  | ma'.measure < 8 = middleSafeSustain_6_8 ma mb
-  | ma'.measure < 10 = middleSafeSustain_8_10 ma mb
-  | ma'.measure < 12 = middleSafeSustain_10_12 ma mb
-  | ma'.measure < 14 = middleSafeSustain_12_14 ma mb
-  | ma'.measure < 16 = middleSafeSustain_14_16 ma mb
-  | ma'.measure < 18 = middleSafeSustain_16_18 ma mb
-  | ma'.measure < 19 = middleSafeSustain_18_19 ma mb
-  | ma'.measure < 20 = middleSafeSustain_19_20 ma mb
-  | ma'.measure < 21 = middleSafeSustain_20_21 ma mb
-  | ma'.measure < 22 = middleSafeSustain_21_22 ma mb
-  | ma'.measure < 23 = middleSafeSustain_22_23 ma mb
-  | ma'.measure < 24 = middleSafeSustain_23_24 ma mb
-  | ma'.measure < 25 = middleSafeSustain_24_25 ma mb
-  | ma'.measure < 26 = middleSafeSustain_25_26 ma mb
+middleSafeSustain ma mb
+  | ma.measure < 4 = middleSafeSustain_0_4 ma mb
+  | ma.measure < 6 = middleSafeSustain_4_6 ma mb
+  | ma.measure < 8 = middleSafeSustain_6_8 ma mb
+  | ma.measure < 10 = middleSafeSustain_8_10 ma mb
+  | ma.measure < 12 = middleSafeSustain_10_12 ma mb
+  | ma.measure < 14 = middleSafeSustain_12_14 ma mb
+  | ma.measure < 16 = middleSafeSustain_14_16 ma mb
+  | ma.measure < 18 = middleSafeSustain_16_18 ma mb
+  | ma.measure < 19 = middleSafeSustain_18_19 ma mb
+  | ma.measure < 20 = middleSafeSustain_19_20 ma mb
+  | ma.measure < 21 = middleSafeSustain_20_21 ma mb
+  | ma.measure < 22 = middleSafeSustain_21_22 ma mb
+  | ma.measure < 23 = middleSafeSustain_22_23 ma mb
+  | ma.measure < 24 = middleSafeSustain_23_24 ma mb
+  | ma.measure < 25 = middleSafeSustain_24_25 ma mb
+  | ma.measure < 26 = middleSafeSustain_25_26 ma mb
   | otherwise = Ab :| Nil
 
 safeSustain :: Number -> Number -> NonEmpty List PitchClass
 safeSustain a b =
   let
-    ma@(MusicalInfo ma') = timeToMusicalInfo a
+    ma = timeToMusicalInfo a
 
     mb = timeToMusicalInfo b
 
     sus
-      | ma'.measure < 4 = introSafeSustain ma mb
-      | ma'.measure >= 82 = endSafeSustain (a - codaStarts)
-      | otherwise = middleSafeSustain (measureMinus (measureMinus ma $ 26 * (ma'.measure `div` 26)) 4) (measureMinus (measureMinus mb $ 26 * (ma'.measure `div` 26)) 4)
+      | ma.measure < 4 = introSafeSustain ma mb
+      | ma.measure >= 82 = endSafeSustain (a - codaStarts)
+      | otherwise = middleSafeSustain (measureMinus (measureMinus ma $ 26 * (ma.measure `div` 26)) 4) (measureMinus (measureMinus mb $ 26 * (ma.measure `div` 26)) 4)
   in
     sus
 
@@ -1779,7 +1772,7 @@ makeCanvas acc time = do
                                     let
                                       pdpi = (pd + maybe 0.0 (\s -> (time - foldl max 0.0 s) `pow` 1.6) sqv) * pi
 
-                                      (MusicalInfo mif) = timeToMusicalInfo (time - quaver)
+                                      mif = timeToMusicalInfo (time - quaver)
 
                                       r
                                         | mif.beat - bt < 0.3 = cw
