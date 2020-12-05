@@ -111,25 +111,31 @@ pure2 :: forall m0 m1 a. Applicative m0 => Applicative m1 => a -> m0 (m1 a)
 pure2 = pure <<< pure
 
 metronomeClick :: Number -> Number -> MusicM AudioListD2
-metronomeClick s i = do
+metronomeClick s gp = do
   { time } <- ask
   pure2
-    $ playBufT_ ("buffer" <> show s) "metronome-wb"
-        ( defaultParam
-            { param = s
-            , timeOffset = if time < i then i - time else 0.0
-            }
-        )
+    $ playBufT_ ("buffer" <> show s) "metronome-wb" (beatGapToStartOffsetAsParam s gp)
+
+startM1 = { measure: 1, beat: 0.0 }
+
+startM2 = { measure: 2, beat: 0.0 }
+
+startM3 = { measure: 3, beat: 0.0 }
 
 metronome :: MusicM AudioListD2
 metronome = do
-  { musicalInfo: { measure, beat } } <- ask
+  { musicalInfo } <- ask
+  let
+    mmm3 = musicalInfo { measure = musicalInfo.measure `mod` 3 }
   let
     o
-      | beat + krt >= 1.0 && beat < 2.0 = metronomeClick 1.1 (musicalInfoToTime { measure, beat: 1.0 })
-      | beat > 2.0 && beat - 3.0 + krt > 0.0 = metronomeClick 0.9 (musicalInfoToTime { measure: measure + 1, beat: 0.0 })
-      | beat < 1.0 = metronomeClick 0.9 (musicalInfoToTime { measure, beat: 0.0 })
-      | beat + krt >= 2.0 = metronomeClick 1.6 (musicalInfoToTime { measure, beat: 2.0 })
+      | musicalInfo.measure == 0 = metronomeClick 0.9 0.0
+      | Just gap <- startM3 |< mmm3 = metronomeClick 0.9 gap
+      | mmm3 ||< startM1 = metronomeClick 0.9 0.0
+      | Just gap <- startM1 |< mmm3
+      , mmm3 ||< startM2 = metronomeClick 1.1 gap
+      | Just gap <- startM2 |< mmm3
+      , mmm3 ||< startM3 = metronomeClick 1.6 gap
       | otherwise = pure Nil
   o
 
