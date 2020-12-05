@@ -163,6 +163,8 @@ startM36 = mmi 36 0.0 :: MusicalInfo
 
 startM48 = mmi 42 0.0 :: MusicalInfo
 
+startM60 = mmi 60 0.0 :: MusicalInfo
+
 miGap :: MusicalInfo -> MusicalInfo -> Maybe Number
 miGap target atNow =
   let
@@ -205,11 +207,39 @@ introLoopPlayer il = do
   let
     o
       | mi.measure == 0 = pure <$> introLoopSingleton IntroLoopA 0.0
-      | Just gap <- startM0 |< mmm40, mmm40 ||< startM12 = pure <$> introLoopSingleton IntroLoopA gap
-      | Just gap <- startM12 |< mmm40, mmm40 ||< startM24 = pure <$> introLoopSingleton IntroLoopB gap
-      | Just gap <- startM24 |< mmm40, mmm40 ||< startM36 = pure <$> introLoopSingleton IntroLoopC gap
-      | Just gap <- startM36 |< mmm40, mmm40 ||< startM48 = pure <$> introLoopSingleton IntroLoopD gap
-      | Just gap <- startM48 |< mmm40 = pure <$> introLoopSingleton IntroLoopE gap
+      | Just gap <- startM60 |< mmm40 =
+        sequence
+          $ introLoopSingleton IntroLoopA gap
+          : introLoopSingleton IntroLoopE 0.0
+          : Nil
+      | mmm40 ||< startM12 =
+        sequence
+          $ introLoopSingleton IntroLoopA 0.0
+          : introLoopSingleton IntroLoopE 0.0
+          : Nil
+      | Just gap <- startM12 |< mmm40
+      , mmm40 ||< startM24 =
+        sequence
+          $ introLoopSingleton IntroLoopB gap
+          : introLoopSingleton IntroLoopA 0.0
+          : Nil
+      | Just gap <- startM24 |< mmm40
+      , mmm40 ||< startM36 =
+        sequence
+          $ introLoopSingleton IntroLoopC gap
+          : introLoopSingleton IntroLoopB 0.0
+          : Nil
+      | Just gap <- startM36 |< mmm40
+      , mmm40 ||< startM48 =
+        sequence
+          $ introLoopSingleton IntroLoopD gap
+          : introLoopSingleton IntroLoopC 0.0
+          : Nil
+      | Just gap <- startM48 |< mmm40 =
+        sequence
+          $ introLoopSingleton IntroLoopE gap
+          : introLoopSingleton IntroLoopD 0.0
+          : Nil
       | otherwise = pure Nil
   o
 
