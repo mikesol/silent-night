@@ -11,14 +11,18 @@ import Data.DateTime.Instant (unInstant)
 import Data.Either (Either(..), either)
 import Data.Foldable (class Foldable, foldl, traverse_)
 import Data.Int (floor, toNumber)
-import Data.Lens (_2, over)
+import Data.Lens (Lens', _2, _Just, over, set)
+import Data.Lens.Record (prop)
 import Data.List (List(..), (:))
 import Data.List as L
 import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe, maybe')
 import Data.Newtype (wrap)
 import Data.NonEmpty (NonEmpty, (:|))
 import Data.Profunctor (lcmap)
+import Data.Profunctor.Choice (class Choice)
+import Data.Profunctor.Strong (class Strong)
 import Data.String (Pattern(..), indexOf)
+import Data.Symbol (SProxy(..))
 import Data.Traversable (sequence)
 import Data.Tuple (Tuple(..), fst, snd)
 import Data.Typelevel.Num (D2, D3, D4, D6, d0, d1, d2, d3, d4, d5)
@@ -31,7 +35,7 @@ import Effect.Now (now)
 import Effect.Random (random)
 import Effect.Ref as Ref
 import FRP.Behavior (Behavior, behavior)
-import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, BrowserAudioBuffer, CanvasInfo(..), decodeAudioDataFromUri, defaultExporter, evalPiecewise, gain_, runInBrowser_, speaker')
+import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, AudioUnit, BrowserAudioBuffer, CanvasInfo(..), decodeAudioDataFromUri, defaultExporter, defaultParam, evalPiecewise, gain_, playBufT_, playBuf_, runInBrowser_, speaker')
 import FRP.Event (Event, makeEvent, subscribe)
 import Foreign.Object as O
 import Graphics.Canvas (Rectangle)
@@ -81,6 +85,101 @@ type MusicalInfo
   = { measure :: Int
     , beat :: Number
     }
+
+type AudioEnv
+  = { initiatedCoda :: Boolean
+    , mainStarts :: Maybe Number
+    , audioMarkers :: AudioMarkers
+    , time :: Number
+    , musicalInfo :: MusicalInfo
+    }
+
+type MusicM
+  = Reader AudioEnv
+
+type AudioListD2
+  = List (AudioUnit D2)
+
+pure2 :: forall m0 m1 a. Applicative m0 => Applicative m1 => a -> m0 (m1 a)
+pure2 = pure <<< pure
+
+metronomeClick :: Number -> Number -> MusicM AudioListD2
+metronomeClick s i = do
+  { time } <- ask
+  pure2
+    $ playBufT_ ("buffer" <> show s) "metronome-wb"
+        ( defaultParam
+            { param = s
+            , timeOffset = if time < i then i - time else 0.0
+            }
+        )
+
+metronome :: MusicM AudioListD2
+metronome = do
+  { musicalInfo: { measure, beat } } <- ask
+  let
+    o
+      | beat + krt >= 1.0 && beat < 2.0 = metronomeClick 1.1 (musicalInfoToTime { measure, beat: 1.0 })
+      | beat > 2.0 && beat - 3.0 + krt > 0.0 = metronomeClick 0.9 (musicalInfoToTime { measure: measure + 1, beat: 0.0 })
+      | beat < 1.0 = metronomeClick 0.9 (musicalInfoToTime { measure, beat: 0.0 })
+      | beat + krt >= 2.0 = metronomeClick 1.6 (musicalInfoToTime { measure, beat: 2.0 })
+      | otherwise = pure Nil
+  o
+
+introBG :: MusicM AudioListD2
+introBG = pure Nil
+
+verses :: MusicM AudioListD2
+verses = pure Nil
+
+triangle :: MusicM AudioListD2
+triangle = pure Nil
+
+square :: MusicM AudioListD2
+square = pure Nil
+
+motion :: MusicM AudioListD2
+motion = pure Nil
+
+gears :: MusicM AudioListD2
+gears = pure Nil
+
+large :: MusicM AudioListD2
+large = pure Nil
+
+snow :: MusicM AudioListD2
+snow = pure Nil
+
+bells :: MusicM AudioListD2
+bells = pure Nil
+
+shrink :: MusicM AudioListD2
+shrink = pure Nil
+
+rise :: MusicM AudioListD2
+rise = pure Nil
+
+heart :: MusicM AudioListD2
+heart = pure Nil
+
+silentNight :: MusicM AudioListD2
+silentNight =
+  fold
+    <$> sequence
+        [ metronome
+        , introBG
+        , verses
+        , triangle
+        , square
+        , motion
+        , gears
+        , large
+        , snow
+        , bells
+        , rise
+        , shrink
+        , heart
+        ]
 
 musicalInfoToTime :: MusicalInfo -> Number
 musicalInfoToTime { measure, beat } = (toNumber measure * 3.0 + beat) * 60.0 / tempo
@@ -284,6 +383,8 @@ toNel (h : t) = h :| t
 ----
 kr = (toNumber defaultEngineInfo.msBetweenSamples) / 1000.0 :: Number
 
+krt = kr * tempo / 60.0 :: Number
+
 loopDownload :: AudioContext -> String -> Aff BrowserAudioBuffer
 loopDownload ctx str =
   res
@@ -458,6 +559,204 @@ data HarmChooserStep
 
 derive instance eqHarmChooserStep :: Eq HarmChooserStep
 
+amark :: Lens' SilentNightAccumulator AudioMarkers
+amark = prop (SProxy :: SProxy "audioMarkers")
+
+type AccumulatorSetter a
+  = a -> SilentNightAccumulator -> SilentNightAccumulator
+
+type EndTimeSetter
+  = AccumulatorSetter Number
+
+type BegTimeSetter
+  = AccumulatorSetter Number
+
+_Just_2_1 = _Just <<< _2 :: forall p inter. Choice p ⇒ Strong p ⇒ p (Maybe (Tuple inter (Maybe Number))) (Maybe (Tuple inter (Maybe Number))) -> p (Marker inter) (Marker inter)
+
+_Just_2_2 = _Just <<< _2 <<< _Just <<< _2 :: forall p inter. Choice p ⇒ Strong p ⇒ p (Maybe Number) (Maybe Number) -> p (Marker inter) (Marker inter)
+
+maybeTupleMod :: forall i x. i -> Maybe (Tuple i (Maybe x)) -> Maybe (Tuple i (Maybe x))
+maybeTupleMod i Nothing = Just $ Tuple i Nothing
+
+maybeTupleMod i (Just (Tuple _ x)) = Just $ Tuple i x
+
+standardEndTimeBleed = 5.0 :: Number
+
+triangleLens = amark <<< prop (SProxy :: SProxy "triangle") :: Lens' SilentNightAccumulator TriangleMarker
+
+triangleEndTimeBleed = standardEndTimeBleed :: Number
+
+setBegTime :: forall inter. ((Marker inter -> Marker inter) -> SilentNightAccumulator -> SilentNightAccumulator) → Number -> SilentNightAccumulator -> SilentNightAccumulator
+setBegTime interLens = over interLens <<< maybeTupleMod
+
+setInter :: forall inter. ((Marker inter -> Marker inter) -> SilentNightAccumulator -> SilentNightAccumulator) → inter -> SilentNightAccumulator -> SilentNightAccumulator
+setInter interLens = over (interLens <<< _Just_2_1) <<< maybeTupleMod
+
+setEndTime :: forall inter. ((Marker inter -> Marker inter) -> SilentNightAccumulator -> SilentNightAccumulator) → Number -> SilentNightAccumulator -> SilentNightAccumulator
+setEndTime endTimeLens = set (endTimeLens <<< _Just_2_2) <<< Just
+
+setTriangleBegTime = setBegTime triangleLens :: BegTimeSetter
+
+setTriangleVector = setInter triangleLens :: AccumulatorSetter (Vec D3 (Maybe Number))
+
+setTriangleEndTime = setEndTime triangleLens :: EndTimeSetter
+
+squareLens = amark <<< prop (SProxy :: SProxy "square") :: Lens' SilentNightAccumulator SquareMarker
+
+squareEndTimeBleed = standardEndTimeBleed :: Number
+
+setSquareBegTime = setBegTime squareLens :: BegTimeSetter
+
+setSquareVector = setInter squareLens :: AccumulatorSetter (Vec D4 (Maybe Number))
+
+setSquareEndTime = setEndTime squareLens :: EndTimeSetter
+
+motionEndTimeBleed = standardEndTimeBleed :: Number
+
+motionLens = amark <<< prop (SProxy :: SProxy "motion") :: Lens' SilentNightAccumulator MotionMarker
+
+setMotionBegTime = setBegTime motionLens :: BegTimeSetter
+
+setMotionPoints = setInter motionLens :: AccumulatorSetter (Tuple Point Point)
+
+setMotionEndTime = setEndTime motionLens :: EndTimeSetter
+
+riseEndTimeBleed = standardEndTimeBleed :: Number
+
+riseLens = amark <<< prop (SProxy :: SProxy "rise") :: Lens' SilentNightAccumulator RiseMarker
+
+setRiseBegTime = setBegTime riseLens :: BegTimeSetter
+
+setRiseVector = setInter riseLens :: AccumulatorSetter (Vec D6 (Maybe Number))
+
+setRiseEndTime = setEndTime riseLens :: EndTimeSetter
+
+largeEndTimeBleed = standardEndTimeBleed :: Number
+
+largeLens = amark <<< prop (SProxy :: SProxy "large") :: Lens' SilentNightAccumulator LargeMarker
+
+setLargeBegTime = setBegTime largeLens :: BegTimeSetter
+
+setLargeList = setInter largeLens :: AccumulatorSetter (List Number)
+
+setLargeEndTime = setEndTime largeLens :: EndTimeSetter
+
+bellsEndTimeBleed = standardEndTimeBleed :: Number
+
+bellsLens = amark <<< prop (SProxy :: SProxy "bells") :: Lens' SilentNightAccumulator BellsMarker
+
+setBellsBegTime = setBegTime bellsLens :: BegTimeSetter
+
+setBellsList = setInter bellsLens :: AccumulatorSetter (List (List Number))
+
+setBellsEndTime = setEndTime bellsLens :: EndTimeSetter
+
+gearsEndTimeBleed = standardEndTimeBleed :: Number
+
+gearsLens = amark <<< prop (SProxy :: SProxy "gears") :: Lens' SilentNightAccumulator GearsMarker
+
+setGearsBegTime = setBegTime gearsLens :: BegTimeSetter
+
+setGearsVector = setInter gearsLens :: AccumulatorSetter (Vec D4 (Maybe Number))
+
+setGearsEndTime = setEndTime gearsLens :: EndTimeSetter
+
+shrinkEndTimeBleed = standardEndTimeBleed :: Number
+
+shrinkLens = amark <<< prop (SProxy :: SProxy "shrink") :: Lens' SilentNightAccumulator ShrinkMarker
+
+setShrinkBegTime = setBegTime shrinkLens :: BegTimeSetter
+
+setShrinkVector = setInter shrinkLens :: AccumulatorSetter (Vec D6 Number)
+
+setShrinkEndTime = setEndTime shrinkLens :: EndTimeSetter
+
+snowEndTimeBleed = standardEndTimeBleed :: Number
+
+snowLens = amark <<< prop (SProxy :: SProxy "snow") :: Lens' SilentNightAccumulator SnowMarker
+
+setSnowBegTime = setBegTime snowLens :: BegTimeSetter
+
+setSnowList = setInter snowLens :: AccumulatorSetter (List (Maybe Number))
+
+setSnowEndTime = setEndTime snowLens :: EndTimeSetter
+
+heartEndTimeBleed = standardEndTimeBleed :: Number
+
+heartLens = amark <<< prop (SProxy :: SProxy "heart") :: Lens' SilentNightAccumulator HeartMarker
+
+setHeartBegTime = setBegTime heartLens :: BegTimeSetter
+
+setHeartStartTime = setInter heartLens :: AccumulatorSetter Number
+
+setHeartEndTime = setEndTime heartLens :: EndTimeSetter
+
+type Marker a
+  = Maybe (Tuple Number (Maybe (Tuple a (Maybe Number))))
+
+type VecMarker a
+  = Marker (Vec a (Maybe Number))
+
+type VecMarker' a
+  = Marker (Vec a Number)
+
+type TriangleMarker
+  = VecMarker D3 -- startPts end
+
+type SquareMarker
+  = VecMarker D4 -- startPts end
+
+type MotionMarker
+  = Marker (Tuple Point Point) -- motion end
+
+type RiseMarker
+  = VecMarker D6 -- startPts end
+
+type LargeMarker
+  = Marker (List Number) -- onsets end
+
+type ShrinkMarker
+  = VecMarker' D6 -- circleRs end
+
+type BellsMarker
+  = Marker (List (List Number)) -- onsets end
+
+type GearsMarker
+  = VecMarker D4 -- startPts end
+
+type SnowMarker
+  = Marker (List (Maybe Number)) -- onsets end
+
+type HeartMarker
+  = Marker Number
+
+type AudioMarkers
+  = { triangle :: TriangleMarker
+    , square :: SquareMarker
+    , motion :: MotionMarker
+    , rise :: RiseMarker
+    , large :: LargeMarker
+    , bells :: BellsMarker
+    , gears :: GearsMarker
+    , shrink :: ShrinkMarker
+    , snow :: SnowMarker
+    , heart :: HeartMarker
+    }
+
+defaultAudioMarkers :: AudioMarkers
+defaultAudioMarkers =
+  { triangle: Nothing
+  , square: Nothing
+  , motion: Nothing
+  , rise: Nothing
+  , large: Nothing
+  , bells: Nothing
+  , gears: Nothing
+  , shrink: Nothing
+  , snow: Nothing
+  , heart: Nothing
+  }
+
 type SilentNightAccumulator
   = { initiatedClick :: Boolean
     , inClick :: Boolean
@@ -467,6 +766,7 @@ type SilentNightAccumulator
     , initiatedCoda :: Boolean
     , mainStarts :: Maybe Number
     , introEnds :: Maybe Number
+    , audioMarkers :: AudioMarkers
     }
 
 inRect :: Point -> Rectangle -> Boolean
@@ -839,7 +1139,7 @@ snowRecurser i w h acc startT time l = go 0 Nil (if acc.inClick then l else Nil)
   where
   go z hd Nil =
     pure
-      $ Tuple acc
+      $ Tuple (setSnowList l (setSnowBegTime i.eventStart acc))
           ( fold
               ( map
                   ( \(Tuple (SnowI xrd yrd rrd) mn) ->
@@ -891,7 +1191,7 @@ bellsRecurser i w h acc startT time l = go 0 Nil (if acc.inClick then l else Nil
 
   go z hd Nil =
     pure
-      $ Tuple acc
+      $ Tuple (setBellsList l acc)
           ( makeBells w h
               ( map
                   ( \tl ->
@@ -1008,7 +1308,7 @@ paintShrinks w h acc i shrinkF curPos time =
   in
     pure
       $ ( Tuple
-            ( acc
+            ( (setShrinkVector newPos acc)
                 { activity =
                   SilentNightPlayer
                     ( i
@@ -1168,10 +1468,12 @@ makeCanvas acc time = do
             nextHeart = nextObj Heart
 
             o
-              | maybe false (\s -> time > standardOutro + s + heartNormal) v = newCanvas i acc time
+              | Just s <- v
+              , shouldEnd <- standardOutro + s + heartNormal
+              , time > shouldEnd = newCanvas i (setHeartEndTime (shouldEnd + heartEndTimeBleed) acc) time
               | time < i.eventStart + standardIntro =
                 pure
-                  $ ( Tuple acc
+                  $ ( Tuple (setHeartBegTime i.eventStart acc)
                         $ filled
                             ( fillColor
                                 (whiteRGBA ((time - i.eventStart) / standardIntro))
@@ -1188,7 +1490,7 @@ makeCanvas acc time = do
                       (sqToRect (w / 2.0) (h / 2.0) cw) = nextHeart acc i Just time
               | otherwise =
                 pure
-                  $ ( Tuple acc
+                  $ ( Tuple (maybe acc (flip setHeartStartTime acc) v)
                         $ ( filled
                               ( fillColor
                                   ( whiteRGBA
@@ -1224,10 +1526,12 @@ makeCanvas acc time = do
             nextTriangle = nextObj Triangle
 
             o
-              | maybe false (\s -> time > standardOutro + foldl max 0.0 s) sqv = newCanvas i acc time
+              | Just s <- sqv
+              , shouldEnd <- standardOutro + foldl max 0.0 s
+              , time > shouldEnd = newCanvas i (setTriangleEndTime (shouldEnd + triangleEndTimeBleed) acc) time
               | time < i.eventStart + standardIntro =
                 pure
-                  $ ( Tuple acc
+                  $ ( Tuple (setTriangleBegTime i.eventStart acc)
                         $ fold
                             ( map
                                 ( \pd ->
@@ -1261,7 +1565,7 @@ makeCanvas acc time = do
                       (sqToRect (sinp w (4.0 * pi / 3.0)) (cosp h (4.0 * pi / 3.0)) cw) = nextTriangle acc i (\t -> (top +> left +> (Just t) +> empty)) time
               | otherwise =
                 pure
-                  $ ( Tuple acc
+                  $ ( Tuple (setTriangleVector v acc)
                         $ fold
                             ( map
                                 ( \(Tuple pd (Tuple bt n)) ->
@@ -1322,10 +1626,12 @@ makeCanvas acc time = do
             nextSquare = nextObj Square
 
             o
-              | maybe false (\s -> time > standardOutro + squareTravel + foldl max 0.0 s) sqv = newCanvas i acc time
+              | Just s <- sqv
+              , shouldEnd <- standardOutro + squareTravel + foldl max 0.0 s
+              , time > shouldEnd = newCanvas i (setSquareEndTime (shouldEnd + squareEndTimeBleed) acc) time
               | time < i.eventStart + standardIntro =
                 pure
-                  $ ( Tuple acc
+                  $ ( Tuple (setSquareBegTime i.eventStart acc)
                         $ fold
                             ( map
                                 ( \{ x, y } ->
@@ -1353,7 +1659,7 @@ makeCanvas acc time = do
                       (sqToRect (c2 * w) (c2 * h) cw) = nextSquare acc i (\t -> (topLeft +> topRight +> bottomLeft +> (Just t) +> empty)) time
               | otherwise =
                 pure
-                  $ ( Tuple acc
+                  $ ( Tuple (setSquareVector v acc)
                         $ fold
                             ( map
                                 ( \(Tuple { x0, y0, x1, y1 } n) ->
@@ -1453,10 +1759,12 @@ makeCanvas acc time = do
                 (arc (w / 2.0) (h / 2.0) gp (gp + (calcSlope 0.0 1.0 w 2.0 mcw * pi)) mcw)
 
             o
-              | maybe false (\s -> time > standardOutro + gearStay + foldl max 0.0 s) sqv = newCanvas i acc time
+              | Just s <- sqv
+              , shouldEnd <- standardOutro + gearStay + foldl max 0.0 s
+              , time > shouldEnd = newCanvas i (setGearsEndTime (shouldEnd + gearsEndTimeBleed) acc) time
               | time < i.eventStart + standardIntro =
                 pure
-                  $ ( Tuple acc
+                  $ ( Tuple (setGearsBegTime i.eventStart acc)
                         $ fold
                             ( map
                                 (\(Tuple mcw gs) -> gear2arc ((time - i.eventStart) / standardIntro) mcw gs)
@@ -1477,7 +1785,7 @@ makeCanvas acc time = do
                   && dArc cw3 = nextGear acc i (\t -> (gear0 +> gear1 +> gear2 +> (Just t) +> empty)) time
               | otherwise =
                 pure
-                  $ ( Tuple acc
+                  $ ( Tuple (setGearsVector v acc)
                         $ fold
                             ( map
                                 ( \(Tuple (Tuple mcw gp) (Tuple gd n)) ->
@@ -1527,10 +1835,11 @@ makeCanvas acc time = do
               | otherwise = mempty
 
             o
-              | time > i.eventStart + standardIntro + motionNormal + standardOutro = newCanvas i acc time
+              | shouldEnd <- i.eventStart + standardIntro + motionNormal + standardOutro
+              , time > shouldEnd = newCanvas i (setMotionEndTime (shouldEnd + motionEndTimeBleed) acc) time
               | time < i.eventStart + standardIntro =
                 pure
-                  $ Tuple acc
+                  $ Tuple (setMotionBegTime i.eventStart acc)
                       ( instr
                           <> filled
                               (fillColor (whiteRGBA (min 1.0 $ (time - i.eventStart) / standardIntro)))
@@ -1546,12 +1855,27 @@ makeCanvas acc time = do
 
                       newY = calibrateY acc oss
 
-                      newPt = Right (Tuple { x: newX, y: newY } oss)
+                      npt = { x: newX, y: newY }
+
+                      ppt = { x: xp, y: yp }
+
+                      newPt = Right (Tuple npt oss)
                     in
-                      motionMaker (Motion (Just { x: xp, y: yp }) newPt) newX newY cw acc i instr time
+                      motionMaker (Motion (Just ppt) newPt) newX newY cw (setMotionPoints (Tuple ppt npt) acc) i instr time
                   else
-                    motionMaker (Motion prevT lr) xp yp cw acc i instr time
-                Right (Tuple old offset) -> if needsToStopFollowing acc lr then let newPt = (Left { x: xp / w, y: yp / h }) in motionMaker (Motion (Just old) newPt) (eix w acc newPt) (eiy h acc newPt) cw acc i instr time else motionMaker (Motion (Just old) (Right (Tuple { x: xp, y: yp } offset))) xp yp cw acc i instr time
+                    let npt = { x: xp, y: yp } in motionMaker (Motion prevT lr) xp yp cw (setMotionPoints (Tuple (fromMaybe npt prevT) npt) acc) i instr time
+                Right (Tuple old offset) ->
+                  if needsToStopFollowing acc lr then
+                    let
+                      newPt = (Left { x: xp / w, y: yp / h })
+
+                      nxp = (eix w acc newPt)
+
+                      nyp = (eiy h acc newPt)
+                    in
+                      motionMaker (Motion (Just old) newPt) nxp nyp cw (setMotionPoints (Tuple old { x: nxp, y: nyp }) acc) i instr time
+                  else
+                    let npt = { x: xp, y: yp } in motionMaker (Motion (Just old) (Right (Tuple npt offset))) xp yp cw (setMotionPoints (Tuple old npt) acc) i instr time
           in
             o
         Rise v ->
@@ -1583,10 +1907,11 @@ makeCanvas acc time = do
             heightNow = h * (calcSlope 0.0 0.9 1.0 0.1 (min normalizedTime 1.0))
 
             o
-              | time > tillNormal + standardOutro = newCanvas i acc time
+              | shouldEnd <- tillNormal + standardOutro
+              , time > shouldEnd = newCanvas i (setRiseEndTime (shouldEnd + riseEndTimeBleed) acc) time
               | time < tillIntroEnd =
                 pure
-                  $ Tuple acc
+                  $ Tuple (setRiseBegTime i.eventStart acc)
                       ( fold
                           ( map
                               ( \xp ->
@@ -1618,7 +1943,7 @@ makeCanvas acc time = do
                       (sqToRect (11.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> four +> five +> (Just heightNow) +> empty) time
               | otherwise =
                 pure
-                  $ Tuple acc
+                  $ Tuple (setRiseVector v acc)
                       ( fold
                           ( map
                               ( \(Tuple xp pegged) ->
@@ -1650,10 +1975,11 @@ makeCanvas acc time = do
 
             o
               -- todo: 1.5 magic number, change - allows for shrink
-              | time > i.eventStart + standardIntro + shrinkNormal + standardOutro = newCanvas i acc time
+              | shouldEnd <- i.eventStart + standardIntro + shrinkNormal + standardOutro
+              , time > shouldEnd = newCanvas i (setShrinkEndTime (shouldEnd + shrinkEndTimeBleed) acc) time
               | time < i.eventStart + standardIntro =
                 pure
-                  $ ( Tuple acc
+                  $ ( Tuple (setShrinkBegTime i.eventStart acc)
                         $ fold
                             ( map
                                 ( \(Tuple (Tuple xp yp) rr) ->
@@ -1696,7 +2022,7 @@ makeCanvas acc time = do
                           (Just _) -> false
                       )
                       a
-                  ) = newCanvas i acc time
+                  ) = newCanvas i (setSnowEndTime (time + snowEndTimeBleed) acc) time
               | otherwise = snowRecurser i w h acc stTime time a
           in
             o
@@ -1707,10 +2033,11 @@ makeCanvas acc time = do
             nowT = time - stTime
 
             o
-              | time > i.eventStart + standardIntro + bellsNormal + standardOutro = newCanvas i acc time
+              | shouldEnd <- i.eventStart + standardIntro + bellsNormal + standardOutro
+              , time > shouldEnd = newCanvas i (setBellsEndTime (shouldEnd + bellsEndTimeBleed) acc) time
               | time < i.eventStart + standardIntro =
                 pure
-                  $ Tuple acc
+                  $ Tuple (setBellsBegTime (i.eventStart) acc)
                       ( makeBells w h (A.replicate 24 (Tuple 1.0 (min 1.0 $ (time - i.eventStart) / standardIntro)))
                       )
               | otherwise = bellsRecurser i w h acc stTime time a
@@ -1731,11 +2058,12 @@ makeCanvas acc time = do
             newV = maybe v (\mp -> if acc.initiatedClick then (Tuple mp time) : v else v) acc.mousePosition
 
             o
-              | time > i.eventStart + largeCrossing + standardOutro = newCanvas i acc time
+              | shouldEnd <- i.eventStart + largeCrossing + standardOutro
+              , time > shouldEnd = newCanvas i (setLargeEndTime (shouldEnd + largeEndTimeBleed) acc) time
               | otherwise =
                 pure
                   $ Tuple
-                      ( acc
+                      ( (setLargeList (map snd newV) (setLargeBegTime i.eventStart acc))
                           { activity =
                             SilentNightPlayer
                               ( i
@@ -1797,7 +2125,14 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
 
     (Tuple vizAcc cvs) = runReader (makeCanvas acc time) { evts, w: ci.w, h: ci.h }
 
-    players = Nil
+    players =
+      runReader silentNight
+        { initiatedCoda: vizAcc.initiatedCoda
+        , mainStarts: vizAcc.mainStarts
+        , audioMarkers: vizAcc.audioMarkers
+        , time: time
+        , musicalInfo: timeToMusicalInfo time
+        }
 
 allPlayerEvent =
   [ Triangle (fill (const Nothing))
@@ -1890,11 +2225,13 @@ main =
           , initiatedCoda: false
           , mainStarts: Nothing
           , introEnds: Nothing
+          , audioMarkers: defaultAudioMarkers
           }
     , exporter = defaultExporter
     , buffers =
       makeBuffersKeepingCache
-        []
+        [ Tuple "metronome-wb" "https://freesound.org/data/previews/53/53403_400592-lq.mp3"
+        ]
     }
 
 newtype Interactions
