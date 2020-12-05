@@ -1,9 +1,10 @@
 module Test.Main where
 
 import Prelude
+import Data.Maybe (Maybe(..))
 import Effect (Effect)
 import Effect.Aff (launchAff_)
-import Klank.SilentNight (musicalInfoToTime, timeToMusicalInfo)
+import Klank.SilentNight (miGap, musicalInfoToTime, timeToMusicalInfo)
 import Math (abs)
 import Test.Spec (describe, it)
 import Test.Spec.Assertions (shouldEqual)
@@ -34,3 +35,19 @@ main =
             let
               p0 = musicalInfoToTime { measure: 15, beat: 1.32 }
             (abs (p0 - 38.6) < epsilon) `shouldEqual` true
+          it "should produce a gap when necessary" do
+            let
+              g = miGap { measure: 0, beat: 1.3 } { measure: 3, beat: 0.0 }
+            ((\x -> abs (x - 7.7) < epsilon) <$> g) `shouldEqual` Just true
+          it "should produce a small gap when necessary" do
+            let
+              g = miGap { measure: 0, beat: 1.3 } { measure: 0, beat: 1.28 }
+            ((\x -> abs (x + 0.02) < epsilon) <$> g) `shouldEqual` Just true
+          it "should produce a very small gap when necessary" do
+            let
+              g = miGap { measure: 0, beat: 1.3 } { measure: 0, beat: 1.277 }
+            ((\x -> abs (x + 0.023) < epsilon) <$> g) `shouldEqual` Just true
+          it "should not produce a gap when out of range" do
+            let
+              g = miGap { measure: 0, beat: 1.3 } { measure: 0, beat: 1.276 }
+            g `shouldEqual` Nothing

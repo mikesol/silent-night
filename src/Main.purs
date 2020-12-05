@@ -166,9 +166,9 @@ startM48 = mmi 42 0.0 :: MusicalInfo
 miGap :: MusicalInfo -> MusicalInfo -> Maybe Number
 miGap target atNow =
   let
-    targetB = toNumber target.measure + atNow.beat
+    targetB = toNumber target.measure * 3.0 + target.beat
 
-    atNowB = toNumber atNow.measure + atNow.beat
+    atNowB = toNumber atNow.measure * 3.0 + atNow.beat
 
     diffB = atNowB - targetB
   in
