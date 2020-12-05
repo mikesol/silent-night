@@ -24,7 +24,7 @@ import Data.Profunctor.Strong (class Strong)
 import Data.String (Pattern(..), indexOf)
 import Data.Symbol (SProxy(..))
 import Data.Traversable (sequence)
-import Data.Tuple (Tuple(..), fst, snd)
+import Data.Tuple (Tuple(..), fst, snd, uncurry)
 import Data.Typelevel.Num (D2, D3, D4, D6, d0, d1, d2, d3, d4, d5)
 import Data.Vec (Vec, empty, fill, (+>))
 import Data.Vec as V
@@ -35,7 +35,7 @@ import Effect.Now (now)
 import Effect.Random (random)
 import Effect.Ref as Ref
 import FRP.Behavior (Behavior, behavior)
-import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, AudioUnit, BrowserAudioBuffer, CanvasInfo(..), decodeAudioDataFromUri, defaultExporter, defaultParam, evalPiecewise, gain_, playBufT_, playBuf_, runInBrowser_, speaker')
+import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, AudioUnit, BrowserAudioBuffer, CanvasInfo(..), decodeAudioDataFromUri, defaultExporter, defaultParam, evalPiecewise, gainT_, gainT_', gain_, pannerMono_, playBufT_, playBuf_, runInBrowser_, sinOsc_, speaker')
 import FRP.Event (Event, makeEvent, subscribe)
 import Foreign.Object as O
 import Graphics.Canvas (Rectangle)
@@ -81,15 +81,29 @@ silentNightInMeasures = 26.0 :: Number -- includes 2m transition
 
 pieceInMeasures = measureDur * (silentNightInMeasures + silentNightInMeasures + silentNightInMeasures + introInMeasures + preCodaInMeasures) :: Number
 
-type MusicalInfo
-  = { measure :: Int
-    , beat :: Number
+newtype MusicalInfo
+  = MusicalInfo
+  { measure :: Int
+  , beat :: Number
+  }
+
+instance musicalInfoEq :: Eq MusicalInfo where
+  eq (MusicalInfo a) (MusicalInfo b) = a.measure == b.measure && a.beat == b.beat
+
+instance musicalInfoOrd :: Ord MusicalInfo where
+  compare (MusicalInfo a) (MusicalInfo b) = let mc = compare a.measure b.measure in if mc == EQ then compare a.beat b.beat else mc
+
+type VerseStarts
+  = { one :: Maybe (Tuple Number VerseChoice) -- chosenAt choice
+    , two :: Maybe (Tuple Number VerseChoice) -- chosenAt choice
+    , three :: Maybe (Tuple Number VerseChoice) -- chosenAt choice
     }
 
 type AudioEnv
   = { initiatedCoda :: Boolean
     , mainStarts :: Maybe Number
     , audioMarkers :: AudioMarkers
+    , verseStarts :: VerseStarts
     , time :: Number
     , musicalInfo :: MusicalInfo
     }
@@ -116,18 +130,148 @@ metronomeClick s i = do
 
 metronome :: MusicM AudioListD2
 metronome = do
-  { musicalInfo: { measure, beat } } <- ask
+  { musicalInfo: (MusicalInfo { measure, beat }) } <- ask
   let
     o
-      | beat + krt >= 1.0 && beat < 2.0 = metronomeClick 1.1 (musicalInfoToTime { measure, beat: 1.0 })
-      | beat > 2.0 && beat - 3.0 + krt > 0.0 = metronomeClick 0.9 (musicalInfoToTime { measure: measure + 1, beat: 0.0 })
-      | beat < 1.0 = metronomeClick 0.9 (musicalInfoToTime { measure, beat: 0.0 })
-      | beat + krt >= 2.0 = metronomeClick 1.6 (musicalInfoToTime { measure, beat: 2.0 })
+      | beat + krt >= 1.0 && beat < 2.0 = metronomeClick 1.1 (musicalInfoToTime $ MusicalInfo { measure, beat: 1.0 })
+      | beat > 2.0 && beat - 3.0 + krt > 0.0 = metronomeClick 0.9 (musicalInfoToTime $ MusicalInfo { measure: measure + 1, beat: 0.0 })
+      | beat < 1.0 = metronomeClick 0.9 (musicalInfoToTime $ MusicalInfo { measure, beat: 0.0 })
+      | beat + krt >= 2.0 = metronomeClick 1.6 (musicalInfoToTime $ MusicalInfo { measure, beat: 2.0 })
       | otherwise = pure Nil
   o
 
+data IntroLoop
+  = IntroLoopA
+  | IntroLoopB
+  | IntroLoopC
+  | IntroLoopD
+  | IntroLoopE
+
+derive instance eqIntroLoop :: Eq IntroLoop
+
+il2s :: IntroLoop -> String
+il2s IntroLoopA = "IntroLoopA"
+
+il2s IntroLoopB = "IntroLoopB"
+
+il2s IntroLoopC = "IntroLoopC"
+
+il2s IntroLoopD = "IntroLoopD"
+
+il2s IntroLoopE = "IntroLoopE"
+
+startM0 = mmi 0 0.0 :: MusicalInfo
+
+startM12 = mmi 12 0.0 :: MusicalInfo
+
+startM24 = mmi 24 0.0 :: MusicalInfo
+
+startM36 = mmi 36 0.0 :: MusicalInfo
+
+startM48 = mmi 42 0.0 :: MusicalInfo
+
+miGap :: MusicalInfo -> MusicalInfo -> Maybe Number
+miGap (MusicalInfo target) (MusicalInfo atNow) =
+  let
+    targetB = toNumber target.measure + atNow.beat
+
+    atNowB = toNumber atNow.measure + atNow.beat
+
+    diffB = atNowB - targetB
+  in
+    if diffB <= nkrt then Nothing else Just diffB
+
+miGapB :: MusicalInfo -> MusicalInfo -> Boolean
+miGapB target now = isJust $ miGap target now
+
+infixl 4 miGap as |<
+
+infixl 4 miGapB as ||<
+
+beatToTime :: Number -> Number
+beatToTime b = (b * 60.0) / tempo
+
+beatGapToStartOffset :: Number -> Number
+beatGapToStartOffset n = max 0.0 $ kr - beatToTime n
+
+beatGapToStartOffsetAsParam :: Number -> Number -> AudioParameter
+beatGapToStartOffsetAsParam param n =
+  defaultParam
+    { param = param
+    , timeOffset = beatGapToStartOffset n
+    }
+
+introLoopSingleton :: IntroLoop -> Number -> MusicM (AudioUnit D2)
+introLoopSingleton il gp = let ils = il2s il in pure $ playBufT_ ("buf" <> ils) ils (beatGapToStartOffsetAsParam 1.0 gp)
+
+introLoopPlayer :: IntroLoop -> MusicM AudioListD2
+introLoopPlayer il = do
+  { musicalInfo: (MusicalInfo mi) } <- ask
+  let
+    mmm40 = MusicalInfo $ mi { measure = mi.measure `mod` 40 }
+  let
+    o
+      | mi.measure == 0 = pure <$> introLoopSingleton IntroLoopA 0.0
+      | Just gap <- startM0 |< mmm40, mmm40 ||< startM12 = pure <$> introLoopSingleton IntroLoopA gap
+      | Just gap <- startM12 |< mmm40, mmm40 ||< startM24 = pure <$> introLoopSingleton IntroLoopB gap
+      | Just gap <- startM24 |< mmm40, mmm40 ||< startM36 = pure <$> introLoopSingleton IntroLoopC gap
+      | Just gap <- startM36 |< mmm40, mmm40 ||< startM48 = pure <$> introLoopSingleton IntroLoopD gap
+      | Just gap <- startM48 |< mmm40 = pure <$> introLoopSingleton IntroLoopE gap
+      | otherwise = pure Nil
+  o
+
+introLoop :: MusicM AudioListD2
+introLoop =
+  fold
+    <$> sequence
+        ( map introLoopPlayer
+            [ IntroLoopA, IntroLoopB, IntroLoopC, IntroLoopD, IntroLoopE
+            ]
+        )
+
+data ChoiceEvent
+  = ChoiceEventA
+  | ChoiceEventB
+  | ChoiceEventC
+
+derive instance choiceEventEq :: Eq ChoiceEvent
+
+ding :: Number -> String -> PitchClass -> MusicM (AudioUnit D2)
+ding n s p = do
+  { time } <- ask
+  pure (pannerMono_ ("panDing" <> s) 0.0 (gainT_' ("gainDing" <> s) (epwf [ Tuple 0.0 0.0, Tuple n 0.0, Tuple (n + 0.06) 0.2, Tuple (n + 0.3) 0.05, Tuple (n + 0.7) 0.0 ] time) (sinOsc_ ("sinDing" <> s) (conv440 (pcToRefMidi p)))))
+
+makeChoiceEvent :: ChoiceEvent -> (Maybe (Tuple Number VerseChoice)) -> MusicM AudioListD2
+makeChoiceEvent _ Nothing = pure Nil
+
+makeChoiceEvent ce (Just (Tuple st _)) = case ce of
+  ChoiceEventA -> boundPlayer st 2.0 (pure <$> ding st "ceA" Ab)
+  ChoiceEventB -> boundPlayer st 2.0 (pure <$> ding st "ceB" C)
+  ChoiceEventC -> boundPlayer st 2.0 (pure <$> ding st "ceC" Eb)
+
+choiceEvents :: MusicM AudioListD2
+choiceEvents = do
+  { verseStarts: { one, two, three } } <- ask
+  fold
+    <$> sequence
+        ( map (uncurry makeChoiceEvent)
+            [ Tuple ChoiceEventA one
+            , Tuple ChoiceEventB two
+            , Tuple ChoiceEventC three
+            ]
+        )
+
 introBG :: MusicM AudioListD2
-introBG = pure Nil
+introBG = do
+  { time, mainStarts } <- ask
+  if maybe false (\x -> time > x + 5.0) mainStarts then
+    mempty
+  else
+    fold
+      <$> sequence
+          [ introLoop
+          , choiceEvents
+          ]
 
 verses :: MusicM AudioListD2
 verses = pure Nil
@@ -181,8 +325,11 @@ silentNight =
         , heart
         ]
 
+mmi :: Int -> Number -> MusicalInfo
+mmi measure beat = MusicalInfo { measure, beat }
+
 musicalInfoToTime :: MusicalInfo -> Number
-musicalInfoToTime { measure, beat } = (toNumber measure * 3.0 + beat) * 60.0 / tempo
+musicalInfoToTime (MusicalInfo { measure, beat }) = (toNumber measure * 3.0 + beat) * 60.0 / tempo
 
 timeToMusicalInfo :: Number -> MusicalInfo
 timeToMusicalInfo t =
@@ -193,7 +340,7 @@ timeToMusicalInfo t =
 
     beat = beats - ((toNumber measure) * 3.0)
   in
-    { measure, beat }
+    MusicalInfo { measure, beat }
 
 data PitchClass
   = Ab
@@ -211,26 +358,26 @@ data PitchClass
 
 derive instance eqPitchClass :: Eq PitchClass
 
-codaStarts = musicalInfoToTime { measure: 82, beat: 0.0 } :: Number
+codaStarts = musicalInfoToTime (MusicalInfo { measure: 82, beat: 0.0 }) :: Number
 
 measureMinus :: MusicalInfo -> Int -> MusicalInfo
-measureMinus { measure, beat } i = { measure: measure - i, beat }
+measureMinus (MusicalInfo { measure, beat }) i = MusicalInfo { measure: measure - i, beat }
 
 introSafeSustainAb :: MusicalInfo -> NonEmpty List PitchClass
-introSafeSustainAb ma
+introSafeSustainAb (MusicalInfo ma)
   | ma.beat < 2.0 = Ab :| C : Eb : Nil
   | ma.beat < 2.0 = Ab :| Ab : C : Eb : Eb : Nil
   | otherwise = Ab :| Eb : Nil
 
 introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-introSafeSustainDb ma mb
+introSafeSustainDb (MusicalInfo ma) (MusicalInfo mb)
   | ma.measure == mb.measure = Ab :| Ab : Bb : Db : Db : F : Nil
   | otherwise = Ab :| Ab : Ab : Bb : Nil
 
 introSafeSustain :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-introSafeSustain ma mb
-  | ma.measure == 0 || ma.measure == 2 = introSafeSustainAb ma
-  | otherwise = introSafeSustainDb ma mb
+introSafeSustain (MusicalInfo ma) (MusicalInfo mb)
+  | ma.measure == 0 || ma.measure == 2 = introSafeSustainAb (MusicalInfo ma)
+  | otherwise = introSafeSustainDb (MusicalInfo ma) (MusicalInfo mb)
 
 endSafeSustain :: Number -> NonEmpty List PitchClass
 endSafeSustain a
@@ -240,66 +387,66 @@ endSafeSustain a
   | otherwise = Ab :| Ab : Bb : C : C : Eb : Eb : F : G : Nil
 
 middleSafeSustain_0_4 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_0_4 ma mb
+middleSafeSustain_0_4 (MusicalInfo ma) (MusicalInfo mb)
   | ma.measure > 2 && mb.measure < 4 = Ab :| Bb : C : Eb : G : Nil
   | mb.measure < 4 = Ab :| C : Eb : G : Nil
   | ma.measure > 2 && mb.measure < 8 = Bb :| Eb : Eb : G : Nil
   | otherwise = Ab :| Nil
 
 middleSafeSustain_4_6 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_4_6 ma mb
+middleSafeSustain_4_6 (MusicalInfo ma) (MusicalInfo mb)
   | ma.measure == 5 && mb.measure < 6 = Eb :| G : Bb : Db : Nil
   | mb.measure < 6 = Eb :| G : Bb : Nil
   | mb.measure < 8 = Eb :| Eb : G : Bb : Nil
   | otherwise = Eb :| Nil
 
 middleSafeSustain_6_8 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_6_8 ma mb
+middleSafeSustain_6_8 (MusicalInfo ma) (MusicalInfo mb)
   | mb.measure < 8 = Ab :| Ab : Bb : C : C : Eb : G : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_8_10 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_8_10 ma mb
+middleSafeSustain_8_10 (MusicalInfo ma) (MusicalInfo mb)
   | mb.measure < 10 = Db :| Db : F : F : Ab : Ab : Bb : Nil
   | otherwise = Ab :| Ab : Bb : Nil
 
 middleSafeSustain_10_12 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_10_12 ma mb
+middleSafeSustain_10_12 (MusicalInfo ma) (MusicalInfo mb)
   | mb.measure < 12 = Ab :| Ab : Bb : C : C : Eb : G : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_12_14 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_12_14 ma mb
+middleSafeSustain_12_14 (MusicalInfo ma) (MusicalInfo mb)
   | mb.measure < 14 = Db :| Db : F : F : Ab : Ab : Bb : Nil
   | otherwise = Ab :| Ab : Bb : Nil
 
 middleSafeSustain_14_16 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_14_16 ma mb
+middleSafeSustain_14_16 (MusicalInfo ma) (MusicalInfo mb)
   | mb.measure < 16 = Ab :| Ab : Bb : C : C : Eb : G : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_16_18 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_16_18 ma mb
+middleSafeSustain_16_18 (MusicalInfo ma) (MusicalInfo mb)
   | mb.measure < 19 = Eb :| G : Bb : Nil
   | otherwise = Eb :| Bb : Nil
 
 middleSafeSustain_18_19 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_18_19 ma mb
+middleSafeSustain_18_19 (MusicalInfo ma) (MusicalInfo mb)
   | mb.measure < 19 = Ab :| Ab : C : C : Eb : Eb : G : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_19_20 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_19_20 ma mb
+middleSafeSustain_19_20 (MusicalInfo ma) (MusicalInfo mb)
   | mb.measure < 20 = Db :| F : Ab : C : Nil
   | otherwise = Ab :| Ab : C : Nil
 
 middleSafeSustain_20_21 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_20_21 ma mb
+middleSafeSustain_20_21 (MusicalInfo ma) (MusicalInfo mb)
   | mb.measure < 21 = Ab :| C : Eb : Nil
   | otherwise = Ab :| Eb : Nil
 
 middleSafeSustain_21_22 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_21_22 ma mb = Eb :| G : Bb : Nil
+middleSafeSustain_21_22 (MusicalInfo ma) (MusicalInfo mb) = Eb :| G : Bb : Nil
 
 middleSafeSustain_22_23 = const introSafeSustainAb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
 
@@ -310,40 +457,65 @@ middleSafeSustain_24_25 = const introSafeSustainAb :: MusicalInfo -> MusicalInfo
 middleSafeSustain_25_26 = introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
 
 middleSafeSustain :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain ma mb
-  | ma.measure < 4 = middleSafeSustain_0_4 ma mb
-  | ma.measure < 6 = middleSafeSustain_4_6 ma mb
-  | ma.measure < 8 = middleSafeSustain_6_8 ma mb
-  | ma.measure < 10 = middleSafeSustain_8_10 ma mb
-  | ma.measure < 12 = middleSafeSustain_10_12 ma mb
-  | ma.measure < 14 = middleSafeSustain_12_14 ma mb
-  | ma.measure < 16 = middleSafeSustain_14_16 ma mb
-  | ma.measure < 18 = middleSafeSustain_16_18 ma mb
-  | ma.measure < 19 = middleSafeSustain_18_19 ma mb
-  | ma.measure < 20 = middleSafeSustain_19_20 ma mb
-  | ma.measure < 21 = middleSafeSustain_20_21 ma mb
-  | ma.measure < 22 = middleSafeSustain_21_22 ma mb
-  | ma.measure < 23 = middleSafeSustain_22_23 ma mb
-  | ma.measure < 24 = middleSafeSustain_23_24 ma mb
-  | ma.measure < 25 = middleSafeSustain_24_25 ma mb
-  | ma.measure < 26 = middleSafeSustain_25_26 ma mb
+middleSafeSustain ma@(MusicalInfo ma') mb
+  | ma'.measure < 4 = middleSafeSustain_0_4 ma mb
+  | ma'.measure < 6 = middleSafeSustain_4_6 ma mb
+  | ma'.measure < 8 = middleSafeSustain_6_8 ma mb
+  | ma'.measure < 10 = middleSafeSustain_8_10 ma mb
+  | ma'.measure < 12 = middleSafeSustain_10_12 ma mb
+  | ma'.measure < 14 = middleSafeSustain_12_14 ma mb
+  | ma'.measure < 16 = middleSafeSustain_14_16 ma mb
+  | ma'.measure < 18 = middleSafeSustain_16_18 ma mb
+  | ma'.measure < 19 = middleSafeSustain_18_19 ma mb
+  | ma'.measure < 20 = middleSafeSustain_19_20 ma mb
+  | ma'.measure < 21 = middleSafeSustain_20_21 ma mb
+  | ma'.measure < 22 = middleSafeSustain_21_22 ma mb
+  | ma'.measure < 23 = middleSafeSustain_22_23 ma mb
+  | ma'.measure < 24 = middleSafeSustain_23_24 ma mb
+  | ma'.measure < 25 = middleSafeSustain_24_25 ma mb
+  | ma'.measure < 26 = middleSafeSustain_25_26 ma mb
   | otherwise = Ab :| Nil
 
 safeSustain :: Number -> Number -> NonEmpty List PitchClass
 safeSustain a b =
   let
-    ma = timeToMusicalInfo a
+    ma@(MusicalInfo ma') = timeToMusicalInfo a
 
     mb = timeToMusicalInfo b
 
     sus
-      | ma.measure < 4 = introSafeSustain ma mb
-      | ma.measure >= 82 = endSafeSustain (a - codaStarts)
-      | otherwise = middleSafeSustain (measureMinus (measureMinus ma $ 26 * (ma.measure `div` 26)) 4) (measureMinus (measureMinus mb $ 26 * (ma.measure `div` 26)) 4)
+      | ma'.measure < 4 = introSafeSustain ma mb
+      | ma'.measure >= 82 = endSafeSustain (a - codaStarts)
+      | otherwise = middleSafeSustain (measureMinus (measureMinus ma $ 26 * (ma'.measure `div` 26)) 4) (measureMinus (measureMinus mb $ 26 * (ma'.measure `div` 26)) 4)
   in
     sus
 
 ------
+pcToRefMidi :: PitchClass -> Number
+pcToRefMidi Ab = 56.0
+
+pcToRefMidi A = 57.0
+
+pcToRefMidi Bb = 58.0
+
+pcToRefMidi Cb = 59.0
+
+pcToRefMidi C = 60.0
+
+pcToRefMidi Db = 61.0
+
+pcToRefMidi D = 62.0
+
+pcToRefMidi Eb = 63.0
+
+pcToRefMidi Fb = 64.0
+
+pcToRefMidi F = 65.0
+
+pcToRefMidi Gb = 66.0
+
+pcToRefMidi G = 67.0
+
 conv440 :: Number -> Number
 conv440 i = 440.0 * (2.0 `pow` ((i - 69.0) / 12.0))
 
@@ -359,11 +531,13 @@ loopT t = lcmap (_ % t)
 foldOverTime :: forall a b f. Foldable f => Applicative f => Monoid (f b) => (Number -> a -> b) -> (a -> Number) -> f a -> f b
 foldOverTime trans getn = _.acc <<< foldl (\{ acc, clen } a -> { acc: acc <> (pure $ trans clen a), clen: clen + getn a }) { acc: mempty, clen: 0.0 }
 
-boundPlayer :: forall a. Number -> (Number -> List a) -> Number -> List a
-boundPlayer len a time = if time + kr >= 0.0 && time < (len) then a time else Nil
+boundPlayer :: Number -> Number -> MusicM AudioListD2 -> MusicM AudioListD2
+boundPlayer st len a = do
+  { time } <- ask
+  if time + kr >= st && time < (st + len) then a else pure Nil
 
-overZeroPlayer :: forall a. (Number -> List a) -> Number -> List a
-overZeroPlayer = boundPlayer 100000.0 -- large enough...
+overZeroPlayer :: Number -> MusicM AudioListD2 -> MusicM AudioListD2
+overZeroPlayer st = boundPlayer st 100000.0 -- large enough...
 
 skewedTriangle01 :: Number -> Number -> Number -> Number
 skewedTriangle01 os len = lcmap (_ % len) go
@@ -384,6 +558,8 @@ toNel (h : t) = h :| t
 kr = (toNumber defaultEngineInfo.msBetweenSamples) / 1000.0 :: Number
 
 krt = kr * tempo / 60.0 :: Number
+
+nkrt = -1.0 * krt :: Number
 
 loopDownload :: AudioContext -> String -> Aff BrowserAudioBuffer
 loopDownload ctx str =
@@ -506,13 +682,43 @@ versionToInt VersionSeven = 6
 versionToInt VersionEight = 7
 
 chooseVerseOne :: VerseChoice -> SilentNightAccumulator -> Number -> MakeCanvasT
-chooseVerseOne vc acc time = makeCanvas (acc { activity = HarmChooser { step: Row2Animation { startsAt: time, verseOne: vc } } }) time
+chooseVerseOne vc acc time =
+  makeCanvas
+    ( acc
+        { verseStarts =
+          acc.verseStarts
+            { one = Just $ Tuple time vc
+            }
+        , activity = HarmChooser { step: Row2Animation { startsAt: time, verseOne: vc } }
+        }
+    )
+    time
 
 chooseVerseTwo :: VerseChoice -> VerseChoice -> SilentNightAccumulator -> Number -> MakeCanvasT
-chooseVerseTwo v1 vc acc time = makeCanvas (acc { activity = HarmChooser { step: Row3Animation { startsAt: time, verseOne: v1, verseTwo: vc } } }) time
+chooseVerseTwo v1 vc acc time =
+  makeCanvas
+    ( acc
+        { verseStarts =
+          acc.verseStarts
+            { two = Just $ Tuple time vc
+            }
+        , activity = HarmChooser { step: Row3Animation { startsAt: time, verseOne: v1, verseTwo: vc } }
+        }
+    )
+    time
 
 chooseVerseThree :: VerseChoice -> VerseChoice -> VerseChoice -> SilentNightAccumulator -> Number -> MakeCanvasT
-chooseVerseThree v1 v2 vc acc time = makeCanvas (acc { activity = HarmChooser { step: FadeOutAnimation { startsAt: time, verseOne: v1, verseTwo: v2, verseThree: vc } } }) time
+chooseVerseThree v1 v2 vc acc time =
+  makeCanvas
+    ( acc
+        { verseStarts =
+          acc.verseStarts
+            { three = Just $ Tuple time vc
+            }
+        , activity = HarmChooser { step: FadeOutAnimation { startsAt: time, verseOne: v1, verseTwo: v2, verseThree: vc } }
+        }
+    )
+    time
 
 makeCircleDim :: Number -> Number -> Number
 makeCircleDim w i = calcSlope 0.0 (w / circleDivisor) 7.0 (w / (circleDivisor * 2.0)) i
@@ -764,6 +970,7 @@ type SilentNightAccumulator
     , mousePosition :: Maybe { x :: Number, y :: Number }
     , activity :: Activity
     , initiatedCoda :: Boolean
+    , verseStarts :: VerseStarts
     , mainStarts :: Maybe Number
     , introEnds :: Maybe Number
     , audioMarkers :: AudioMarkers
@@ -1572,7 +1779,7 @@ makeCanvas acc time = do
                                     let
                                       pdpi = (pd + maybe 0.0 (\s -> (time - foldl max 0.0 s) `pow` 1.6) sqv) * pi
 
-                                      mif = timeToMusicalInfo (time - quaver)
+                                      (MusicalInfo mif) = timeToMusicalInfo (time - quaver)
 
                                       r
                                         | mif.beat - bt < 0.3 = cw
@@ -2120,7 +2327,7 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
         , curClickId = _.id <$> head p.interactions
         , initiatedCoda = inCoda
         , activity = codizedActivity
-        , mainStarts = if acc'.mainStarts /= Nothing then acc'.mainStarts else (\t -> t + ((6.0 - ((t * tempo / 60.0) % 6.0)) * 60.0 / tempo)) <$> acc'.introEnds
+        , mainStarts = if acc'.mainStarts /= Nothing then acc'.mainStarts else (\t -> t + ((12.0 - ((t * tempo / 60.0) % 12.0)) * 60.0 / tempo)) <$> acc'.introEnds
         }
 
     (Tuple vizAcc cvs) = runReader (makeCanvas acc time) { evts, w: ci.w, h: ci.h }
@@ -2132,6 +2339,7 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
         , audioMarkers: vizAcc.audioMarkers
         , time: time
         , musicalInfo: timeToMusicalInfo time
+        , verseStarts: vizAcc.verseStarts
         }
 
 allPlayerEvent =
@@ -2225,6 +2433,7 @@ main =
           , initiatedCoda: false
           , mainStarts: Nothing
           , introEnds: Nothing
+          , verseStarts: { one: Nothing, two: Nothing, three: Nothing }
           , audioMarkers: defaultAudioMarkers
           }
     , exporter = defaultExporter
