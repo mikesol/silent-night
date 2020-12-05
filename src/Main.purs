@@ -2469,6 +2469,11 @@ main =
     , buffers =
       makeBuffersKeepingCache
         [ Tuple "metronome-wb" "https://freesound.org/data/previews/53/53403_400592-lq.mp3"
+        , Tuple "IntroLoopA" "https://freesound.org/data/previews/207/207956_19852-lq.mp3"
+        , Tuple "IntroLoopB" "https://freesound.org/data/previews/411/411089_5121236-lq.mp3"
+        , Tuple "IntroLoopC" "https://freesound.org/data/previews/267/267335_3112522-lq.mp3"
+        , Tuple "IntroLoopD" "https://freesound.org/data/previews/411/411231_5121236-lq.mp3"
+        , Tuple "IntroLoopE" "https://freesound.org/data/previews/155/155845_2045208-lq.mp3"
         ]
     }
 
