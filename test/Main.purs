@@ -4,7 +4,7 @@ import Prelude
 import Data.Maybe (Maybe(..))
 import Effect (Effect)
 import Effect.Aff (launchAff_)
-import Klank.SilentNight (miGap, musicalInfoToTime, timeToMusicalInfo)
+import Klank.SilentNight (miGap, musicalInfoToTime, roundUpTimeToNextMeasure, timeToMusicalInfo)
 import Math (abs)
 import Test.Spec (describe, it)
 import Test.Spec.Assertions (shouldEqual)
@@ -51,3 +51,10 @@ main =
             let
               g = miGap { measure: 0, beat: 1.3 } { measure: 0, beat: 1.276 }
             g `shouldEqual` Nothing
+          it "should round up to next measure" do
+            roundUpTimeToNextMeasure 2.0 `shouldEqual` { measure: 1, beat: 0.0 }
+            roundUpTimeToNextMeasure 2.5 `shouldEqual` { measure: 1, beat: 0.0 }
+            roundUpTimeToNextMeasure 2.51 `shouldEqual` { measure: 2, beat: 0.0 }
+            roundUpTimeToNextMeasure 4.9 `shouldEqual` { measure: 2, beat: 0.0 }
+            roundUpTimeToNextMeasure 5.0 `shouldEqual` { measure: 2, beat: 0.0 }
+            roundUpTimeToNextMeasure 5.01 `shouldEqual` { measure: 3, beat: 0.0 }

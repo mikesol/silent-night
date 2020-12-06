@@ -10,6 +10,8 @@ import Data.Array as A
 import Data.DateTime.Instant (unInstant)
 import Data.Either (Either(..), either)
 import Data.Foldable (class Foldable, foldl, traverse_)
+import Data.Generic.Rep (class Generic)
+import Data.Generic.Rep.Show (genericShow)
 import Data.Int (floor, toNumber)
 import Data.Lens (Fold', Lens', Setter', Getter', _1, _2, _Just, over, preview, set)
 import Data.Lens.Record (prop)
@@ -44,6 +46,7 @@ import Graphics.Canvas (Rectangle)
 import Graphics.Drawing (Drawing, Point, arc, circle, fillColor, filled, lineWidth, outlineColor, outlined, rectangle, text)
 import Graphics.Drawing.Font (FontOptions, bold, font, italic, sansSerif)
 import Math (abs, cos, pi, pow, sin, (%))
+import Prim.Row (class Cons)
 import Type.Klank.Dev (Klank', affable, defaultEngineInfo, klank)
 import Web.Event.EventTarget (addEventListener, eventListener, removeEventListener)
 import Web.HTML (window)
@@ -82,6 +85,15 @@ introInMeasures = 4.0 :: Number
 silentNightInMeasures = 26.0 :: Number -- includes 2m transition
 
 pieceInMeasures = measureDur * (silentNightInMeasures + silentNightInMeasures + silentNightInMeasures + introInMeasures + preCodaInMeasures) :: Number
+
+roundUpTimeToNextMeasure :: Number -> MusicalInfo
+roundUpTimeToNextMeasure t =
+  let
+    asM = t * tempo / (3.0 * 60.0)
+
+    fl = floor asM
+  in
+    { measure: fl + if toNumber fl == asM then 0 else 1, beat: 0.0 }
 
 type MusicalInfo
   = { measure :: Int
@@ -311,44 +323,143 @@ introBG = do
 verses :: MusicM AudioListD2
 verses = pure Nil
 
-triangle :: MusicM AudioListD2
-triangle = do
+boundedEffect :: (AudioEnv -> Maybe Number) -> (AudioEnv -> Maybe Number) -> (Number -> MusicM AudioListD2) -> MusicM AudioListD2
+boundedEffect begt endt a = do
   audEnv <- ask
   let
-    bt = getTriangleBegTime audEnv
+    bt = begt audEnv
   maybe (pure Nil)
-    ( \x -> case getTriangleEndTime audEnv of
-        Nothing -> pure Nil
-        Just et -> pure Nil
+    ( \x -> case endt audEnv of
+        Nothing -> a x
+        Just et
+          | et < audEnv.time -> a x
+          | otherwise -> pure Nil
     )
     bt
 
+data TrianglePos
+  = TriangleTop
+  | TriangleLeft
+  | TriangleRight
+
+derive instance genericTrianglePos :: Generic TrianglePos _
+
+instance showTrianglePos :: Show TrianglePos where
+  show s = genericShow s
+
+triangleSound :: TrianglePos -> Maybe Number -> Number -> MusicM (AudioUnit D2)
+triangleSound tp dimT gp =
+  let
+    bo =
+      beatGapToStartOffsetAsParam
+        ( case tp of
+            TriangleTop -> 2.0
+            TriangleLeft -> 3.0
+            TriangleRight -> 4.0
+        )
+        gp
+  in
+    pure $ playBufT_ ("buffer" <> show tp) "metronome-wb" bo
+
+triangle' :: Number -> MusicM AudioListD2
+triangle' btm = do
+  ai@{ musicalInfo } <- ask
+  let
+    mmm1 = musicalInfo { measure = musicalInfo.measure `mod` 1 }
+
+    ffm = roundUpTimeToNextMeasure btm
+
+    v = getTriangleVector ai :: Maybe (Vec D3 (Maybe Number))
+
+    top = join $ flip V.index d0 <$> v
+
+    left = join $ flip V.index d1 <$> v
+
+    right = join $ flip V.index d2 <$> v
+  let
+    o
+      | musicalInfo.measure == ffm.measure && musicalInfo.beat < 0.5 = sequence $ triangleSound TriangleTop top 0.0 : Nil
+      | Just gap <- startM1 |< mmm1 =
+        sequence
+          $ triangleSound TriangleTop top gap
+          : triangleSound TriangleRight right 0.0
+          : Nil
+      | mmm1 ||< startM0_1 =
+        sequence
+          $ triangleSound TriangleTop top 0.0
+          : triangleSound TriangleRight right 0.0
+          : Nil
+      | Just gap <- startM0_1 |< mmm1
+      , mmm1 ||< startM0_2 =
+        sequence
+          $ triangleSound TriangleLeft left gap
+          : triangleSound TriangleTop top 0.0
+          : Nil
+      | Just gap <- startM0_2 |< mmm1
+      , mmm1 ||< startM1 =
+        sequence
+          $ triangleSound TriangleRight right gap
+          : triangleSound TriangleLeft left 0.0
+          : Nil
+      | otherwise = pure Nil
+  o
+
+triangle :: MusicM AudioListD2
+triangle = boundedEffect getTriangleBegTime getTriangleEndTime triangle'
+
+square' :: Number -> MusicM AudioListD2
+square' _ = pure Nil
+
 square :: MusicM AudioListD2
-square = pure Nil
+square = boundedEffect getSquareBegTime getSquareEndTime square'
+
+motion' :: Number -> MusicM AudioListD2
+motion' _ = pure Nil
 
 motion :: MusicM AudioListD2
-motion = pure Nil
+motion = boundedEffect getMotionBegTime getMotionEndTime motion'
+
+gears' :: Number -> MusicM AudioListD2
+gears' _ = pure Nil
 
 gears :: MusicM AudioListD2
-gears = pure Nil
+gears = boundedEffect getGearsBegTime getGearsEndTime gears'
+
+large' :: Number -> MusicM AudioListD2
+large' _ = pure Nil
 
 large :: MusicM AudioListD2
-large = pure Nil
+large = boundedEffect getLargeBegTime getLargeEndTime large'
+
+snow' :: Number -> MusicM AudioListD2
+snow' _ = pure Nil
 
 snow :: MusicM AudioListD2
-snow = pure Nil
+snow = boundedEffect getSnowBegTime getSnowEndTime snow'
+
+bells' :: Number -> MusicM AudioListD2
+bells' _ = pure Nil
 
 bells :: MusicM AudioListD2
-bells = pure Nil
+bells = boundedEffect getBellsBegTime getBellsEndTime bells'
+
+shrink' :: Number -> MusicM AudioListD2
+shrink' _ = pure Nil
 
 shrink :: MusicM AudioListD2
-shrink = pure Nil
+shrink = boundedEffect getShrinkBegTime getShrinkEndTime shrink'
+
+rise' :: Number -> MusicM AudioListD2
+rise' _ = pure Nil
 
 rise :: MusicM AudioListD2
-rise = pure Nil
+rise = boundedEffect getRiseBegTime getRiseEndTime rise'
+
+heart' :: Number -> MusicM AudioListD2
+heart' _ = pure Nil
 
 heart :: MusicM AudioListD2
-heart = pure Nil
+heart = boundedEffect getHeartBegTime getHeartEndTime heart'
 
 silentNight :: MusicM AudioListD2
 silentNight =
@@ -832,13 +943,13 @@ type BegTimeSetter
   = AccumulatorSetter Number
 
 type AccumulatorGetter a
-  = AudioEnv -> a
+  = AudioEnv -> (Maybe a)
 
 type BegTimeGetter
-  = AccumulatorGetter (Maybe Number)
+  = AccumulatorGetter (Number)
 
 type EndTimeGetter
-  = AccumulatorGetter (Maybe Number)
+  = AccumulatorGetter (Number)
 
 _Just_2_1 = _Just <<< _2 :: forall p inter. Choice p ⇒ Strong p ⇒ p (Maybe (Tuple inter (Maybe Number))) (Maybe (Tuple inter (Maybe Number))) -> p (Marker inter) (Marker inter)
 
@@ -858,6 +969,8 @@ triangleEndTimeBleed = standardEndTimeBleed :: Number
 --getBegTime :: forall inter r1. (Getter' { audioMarkers :: AudioMarkers | r1 } (Marker inter)) -> SilentNightAccumulator -> Maybe Number
 getBegTime interLens = preview (interLens <<< _Just <<< _1)
 
+getInter interLens = preview (interLens <<< _Just <<< _2 <<< _Just <<< _1)
+
 --getEndTime :: forall inter r1. (Getter' { audioMarkers :: AudioMarkers | r1 } (Marker inter)) -> SilentNightAccumulator -> Maybe Number
 getEndTime interLens = preview (interLens <<< _Just <<< _2 <<< _Just <<< _2 <<< _Just)
 
@@ -872,6 +985,8 @@ setEndTime endTimeLens = set (endTimeLens <<< _Just_2_2) <<< Just
 
 getTriangleBegTime = getBegTime triangleLens :: BegTimeGetter
 
+getTriangleVector = getInter triangleLens :: AccumulatorGetter (Vec D3 (Maybe Number))
+
 getTriangleEndTime = getEndTime triangleLens :: EndTimeGetter
 
 setTriangleBegTime = setBegTime triangleLens :: BegTimeSetter
@@ -880,9 +995,13 @@ setTriangleVector = setInter triangleLens :: AccumulatorSetter (Vec D3 (Maybe Nu
 
 setTriangleEndTime = setEndTime triangleLens :: EndTimeSetter
 
-squareLens = amark <<< prop (SProxy :: SProxy "square") :: Lens' SilentNightAccumulator SquareMarker
+squareLens = amark <<< prop (SProxy :: SProxy "square")
 
 squareEndTimeBleed = standardEndTimeBleed :: Number
+
+getSquareBegTime = getBegTime squareLens :: BegTimeGetter
+
+getSquareEndTime = getEndTime squareLens :: EndTimeGetter
 
 setSquareBegTime = setBegTime squareLens :: BegTimeSetter
 
@@ -892,7 +1011,11 @@ setSquareEndTime = setEndTime squareLens :: EndTimeSetter
 
 motionEndTimeBleed = standardEndTimeBleed :: Number
 
-motionLens = amark <<< prop (SProxy :: SProxy "motion") :: Lens' SilentNightAccumulator MotionMarker
+motionLens = amark <<< prop (SProxy :: SProxy "motion")
+
+getMotionBegTime = getBegTime motionLens :: BegTimeGetter
+
+getMotionEndTime = getEndTime motionLens :: EndTimeGetter
 
 setMotionBegTime = setBegTime motionLens :: BegTimeSetter
 
@@ -902,7 +1025,11 @@ setMotionEndTime = setEndTime motionLens :: EndTimeSetter
 
 riseEndTimeBleed = standardEndTimeBleed :: Number
 
-riseLens = amark <<< prop (SProxy :: SProxy "rise") :: Lens' SilentNightAccumulator RiseMarker
+riseLens = amark <<< prop (SProxy :: SProxy "rise")
+
+getRiseBegTime = getBegTime riseLens :: BegTimeGetter
+
+getRiseEndTime = getEndTime riseLens :: EndTimeGetter
 
 setRiseBegTime = setBegTime riseLens :: BegTimeSetter
 
@@ -912,7 +1039,11 @@ setRiseEndTime = setEndTime riseLens :: EndTimeSetter
 
 largeEndTimeBleed = standardEndTimeBleed :: Number
 
-largeLens = amark <<< prop (SProxy :: SProxy "large") :: Lens' SilentNightAccumulator LargeMarker
+largeLens = amark <<< prop (SProxy :: SProxy "large")
+
+getLargeBegTime = getBegTime largeLens :: BegTimeGetter
+
+getLargeEndTime = getEndTime largeLens :: EndTimeGetter
 
 setLargeBegTime = setBegTime largeLens :: BegTimeSetter
 
@@ -922,7 +1053,11 @@ setLargeEndTime = setEndTime largeLens :: EndTimeSetter
 
 bellsEndTimeBleed = standardEndTimeBleed :: Number
 
-bellsLens = amark <<< prop (SProxy :: SProxy "bells") :: Lens' SilentNightAccumulator BellsMarker
+bellsLens = amark <<< prop (SProxy :: SProxy "bells")
+
+getBellsBegTime = getBegTime bellsLens :: BegTimeGetter
+
+getBellsEndTime = getEndTime bellsLens :: EndTimeGetter
 
 setBellsBegTime = setBegTime bellsLens :: BegTimeSetter
 
@@ -932,7 +1067,11 @@ setBellsEndTime = setEndTime bellsLens :: EndTimeSetter
 
 gearsEndTimeBleed = standardEndTimeBleed :: Number
 
-gearsLens = amark <<< prop (SProxy :: SProxy "gears") :: Lens' SilentNightAccumulator GearsMarker
+gearsLens = amark <<< prop (SProxy :: SProxy "gears")
+
+getGearsBegTime = getBegTime gearsLens :: BegTimeGetter
+
+getGearsEndTime = getEndTime gearsLens :: EndTimeGetter
 
 setGearsBegTime = setBegTime gearsLens :: BegTimeSetter
 
@@ -942,7 +1081,11 @@ setGearsEndTime = setEndTime gearsLens :: EndTimeSetter
 
 shrinkEndTimeBleed = standardEndTimeBleed :: Number
 
-shrinkLens = amark <<< prop (SProxy :: SProxy "shrink") :: Lens' SilentNightAccumulator ShrinkMarker
+shrinkLens = amark <<< prop (SProxy :: SProxy "shrink")
+
+getShrinkBegTime = getBegTime shrinkLens :: BegTimeGetter
+
+getShrinkEndTime = getEndTime shrinkLens :: EndTimeGetter
 
 setShrinkBegTime = setBegTime shrinkLens :: BegTimeSetter
 
@@ -952,7 +1095,11 @@ setShrinkEndTime = setEndTime shrinkLens :: EndTimeSetter
 
 snowEndTimeBleed = standardEndTimeBleed :: Number
 
-snowLens = amark <<< prop (SProxy :: SProxy "snow") :: Lens' SilentNightAccumulator SnowMarker
+snowLens = amark <<< prop (SProxy :: SProxy "snow")
+
+getSnowBegTime = getBegTime snowLens :: BegTimeGetter
+
+getSnowEndTime = getEndTime snowLens :: EndTimeGetter
 
 setSnowBegTime = setBegTime snowLens :: BegTimeSetter
 
@@ -962,7 +1109,11 @@ setSnowEndTime = setEndTime snowLens :: EndTimeSetter
 
 heartEndTimeBleed = standardEndTimeBleed :: Number
 
-heartLens = amark <<< prop (SProxy :: SProxy "heart") :: Lens' SilentNightAccumulator HeartMarker
+heartLens = amark <<< prop (SProxy :: SProxy "heart")
+
+getHeartBegTime = getBegTime heartLens :: BegTimeGetter
+
+getHeartEndTime = getEndTime heartLens :: EndTimeGetter
 
 setHeartBegTime = setBegTime heartLens :: BegTimeSetter
 
