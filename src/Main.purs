@@ -11,11 +11,12 @@ import Data.DateTime.Instant (unInstant)
 import Data.Either (Either(..), either)
 import Data.Foldable (class Foldable, foldl, traverse_)
 import Data.Int (floor, toNumber)
-import Data.Lens (Lens', _2, _Just, over, set)
+import Data.Lens (Fold', Lens', Setter', Getter', _1, _2, _Just, over, preview, set)
 import Data.Lens.Record (prop)
 import Data.List (List(..), (:))
 import Data.List as L
 import Data.Maybe (Maybe(..), fromMaybe, isJust, isNothing, maybe, maybe')
+import Data.Maybe.First (First)
 import Data.Newtype (wrap)
 import Data.NonEmpty (NonEmpty, (:|))
 import Data.Profunctor (lcmap)
@@ -311,7 +312,16 @@ verses :: MusicM AudioListD2
 verses = pure Nil
 
 triangle :: MusicM AudioListD2
-triangle = pure Nil
+triangle = do
+  audEnv <- ask
+  let
+    bt = getTriangleBegTime audEnv
+  maybe (pure Nil)
+    ( \x -> case getTriangleEndTime audEnv of
+        Nothing -> pure Nil
+        Just et -> pure Nil
+    )
+    bt
 
 square :: MusicM AudioListD2
 square = pure Nil
@@ -799,7 +809,17 @@ data HarmChooserStep
 
 derive instance eqHarmChooserStep :: Eq HarmChooserStep
 
-amark :: Lens' SilentNightAccumulator AudioMarkers
+amark ::
+  forall p ami amo rest.
+  Strong p =>
+  p ami amo ->
+  p
+    { audioMarkers :: ami
+    | rest
+    }
+    { audioMarkers :: amo
+    | rest
+    }
 amark = prop (SProxy :: SProxy "audioMarkers")
 
 type AccumulatorSetter a
@@ -810,6 +830,15 @@ type EndTimeSetter
 
 type BegTimeSetter
   = AccumulatorSetter Number
+
+type AccumulatorGetter a
+  = AudioEnv -> a
+
+type BegTimeGetter
+  = AccumulatorGetter (Maybe Number)
+
+type EndTimeGetter
+  = AccumulatorGetter (Maybe Number)
 
 _Just_2_1 = _Just <<< _2 :: forall p inter. Choice p ⇒ Strong p ⇒ p (Maybe (Tuple inter (Maybe Number))) (Maybe (Tuple inter (Maybe Number))) -> p (Marker inter) (Marker inter)
 
@@ -822,18 +851,28 @@ maybeTupleMod i (Just (Tuple _ x)) = Just $ Tuple i x
 
 standardEndTimeBleed = 5.0 :: Number
 
-triangleLens = amark <<< prop (SProxy :: SProxy "triangle") :: Lens' SilentNightAccumulator TriangleMarker
+triangleLens = amark <<< prop (SProxy :: SProxy "triangle")
 
 triangleEndTimeBleed = standardEndTimeBleed :: Number
 
-setBegTime :: forall inter. ((Marker inter -> Marker inter) -> SilentNightAccumulator -> SilentNightAccumulator) → Number -> SilentNightAccumulator -> SilentNightAccumulator
+--getBegTime :: forall inter r1. (Getter' { audioMarkers :: AudioMarkers | r1 } (Marker inter)) -> SilentNightAccumulator -> Maybe Number
+getBegTime interLens = preview (interLens <<< _Just <<< _1)
+
+--getEndTime :: forall inter r1. (Getter' { audioMarkers :: AudioMarkers | r1 } (Marker inter)) -> SilentNightAccumulator -> Maybe Number
+getEndTime interLens = preview (interLens <<< _Just <<< _2 <<< _Just <<< _2 <<< _Just)
+
+--setBegTime :: forall inter r1. (Setter' { audioMarkers :: AudioMarkers | r1 } (Marker inter)) -> Number -> SilentNightAccumulator -> SilentNightAccumulator
 setBegTime interLens = over interLens <<< maybeTupleMod
 
-setInter :: forall inter. ((Marker inter -> Marker inter) -> SilentNightAccumulator -> SilentNightAccumulator) → inter -> SilentNightAccumulator -> SilentNightAccumulator
+--setInter :: forall inter r1. (Setter' { audioMarkers :: AudioMarkers | r1 } (Marker inter)) -> inter -> SilentNightAccumulator -> SilentNightAccumulator
 setInter interLens = over (interLens <<< _Just_2_1) <<< maybeTupleMod
 
-setEndTime :: forall inter. ((Marker inter -> Marker inter) -> SilentNightAccumulator -> SilentNightAccumulator) → Number -> SilentNightAccumulator -> SilentNightAccumulator
+---setEndTime :: forall inter r1. (Setter' { audioMarkers :: AudioMarkers | r1 } (Marker inter)) -> Number -> SilentNightAccumulator -> SilentNightAccumulator
 setEndTime endTimeLens = set (endTimeLens <<< _Just_2_2) <<< Just
+
+getTriangleBegTime = getBegTime triangleLens :: BegTimeGetter
+
+getTriangleEndTime = getEndTime triangleLens :: EndTimeGetter
 
 setTriangleBegTime = setBegTime triangleLens :: BegTimeSetter
 
