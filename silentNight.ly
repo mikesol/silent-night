@@ -31,33 +31,91 @@ melodyA = \relative c' {
   aes2 r4 \bar "|."
 }
 
-vAaccA = \relative c' {
+vBaccA = \relative c' {
   \key aes \major
   \time 3/4
+  R2.
   aes2 aes4 |
   aes2 r4 |
   aes2 aes4 |
-  aes2 r4 |
-  ees'2 ees4 |
-  ees2 r4 |
-  ees2 ees4 |
-  ees2 r4 |
+  des2 r4 |
+  ees2 des4 |
+  c2 r4 |
+  c2 c4 |
+  des2 r4 |
   des2 des4 |
+  c2 c4 |
+  aes4. bes8 c4 |
+  des2 r4 |
   des2 des4 |
-  c4. c8 c4 |
-  aes2 r4 |
-  des2 des4 |
-  des4. des8 des4 |
-  c4. c8 c4 |
-  aes2 r4 |
-  ees'2 ees4 |
-  ees4. ees8 ees4 |
-  ees2. ~ |
-  ees2 r4 |
-  ees2 ees4 |
-  ees4. ees8 ees4 |
-  ees2. ~ |
+  c2 c4 |
+  aes4. bes8 c4 |
+  des4. ( ees8 f4) |
+  g4. (aes8) g4 |
+  g4 f ees |
+  d2. ( |
+  ees2 ) r4 |
+  bes4 (g4) g |
+  f4. f8 g4 |
   ees2 r4 \bar "|."
+}
+
+vBaccCpt = \relative c' {
+  \key aes \major
+  \time 3/4
+  R2.
+  aes8 (bes c aes) ees' (des) |
+  c2 r4 |
+  aes8 (bes c aes) f' (ees) |
+  des (ees f ees des c) |
+  bes8 (c des bes) ees (des) |
+  c (des ees des c bes) |
+  aes (bes' aes ges) f (ees) |
+  des8 (ees f ees des c) |
+  bes8 (c des ees) des4 |
+  des4 (c8 des) c (bes) |
+  aes (bes c) des ees4  |
+  des8 (ees des c bes aes) |
+  bes8 (c des ees) des4 |
+  des4 (c8 des) c (bes) |
+  aes (bes c) des ees4  |
+  ees8 (f g aes bes aes) |
+  g (f ees4 ) des4 |
+  c8 (des) ees4 c |
+  des8 (ees f4 ees8 des) |
+  c8 ( des c bes) aes4 |
+  g8 (aes ) bes4 g8 (ees') |
+  c (des ees des c bes |
+  aes2) r4 \bar "|."
+}
+
+vBaccSimp = \relative c' {
+  \key aes \major
+  \time 3/4
+  R2. |
+  ees4. ( f8 ) ees4 |
+  c2 r4 |
+  ees4. ( f8 ) ees4 |
+  des2 r4 |
+  ees2 des4 |
+  c2 r4 |
+  c2 ees4 |
+  des2 r4 |
+  bes2 bes4 |
+  c4. ( des8 ) c4 |
+  aes4. bes8 c4 |
+  des2 r4 |
+  bes2 bes4 |
+  c4. ( des8 ) c4 |
+  aes4. bes8 c (des) |
+  ees2 r4 |
+  ees2 des4 |
+  c4. des8 ees4 |
+  aes2. ( |
+  ees2 ) r4 |
+  bes4 ( c4 ) des4 |
+  c4. des8 c4 |
+  aes2 r4 \bar "|."
 }
 
 vAaccB = \relative c' {
@@ -280,6 +338,7 @@ melodyC = \relative c' {
   aes2. ~ |
   aes2 r4 \bar "|."
 }
+
 vBaccAA = \relative c'' {
   \key aes \major
   \time 3/4
@@ -314,25 +373,25 @@ vBaccAB = \relative c' {
   R2.*3 |
   r2 c4 |
   des2 r4 
-  r4 bes4 bes4 |
+  bes2 bes4 |
   c2 r4 |
   r2 c4 |
   des2 r4 |
   R2. |
-  r2 aes4 |
+  r2 c4 |
   aes bes c |
   ees ( des2 ) |
   R2. |
-  r2 aes4 ~ |
-  aes bes c |
+  r2 c4 ( |
+  aes ) bes c |
   ees2 r4 |
   ees4. ees8 des4 |
   c2. (|
-  des2.) |
-  ees2. ~ |
-  ees4 r ees4 |
-  c2. ~ |
-  c2 r4 |
+  ees2.) |
+  ees2. |
+  r4 bes ( g) |
+  aes2. ( |
+  c2 ) r4 |
 }
 
 vBaccBA = \relative c'' {
@@ -552,14 +611,14 @@ vCaccCA = \relative c'' {
   c2 c4 |
   aes2 r4 |
   des2 bes4 |
-  des4. (c8) bes4 |
+  c2 c4 |
   c4. des8 c4 |
   aes2 r4 |
+  des2 bes4 |
+  c2 c4 |
+  c4. des8 c4 |
+  bes2 r4 |
   bes2 bes4 |
-  des4. (c8) bes4 |
-  c4. des8 c4 |
-  aes2 r4 |
-  ees'2 des4 |
   c4. des8 c4 |
   aes2. ( |
   c2 ) r4 |
@@ -582,18 +641,18 @@ vCaccCB = \relative c'' {
   aes2 r4 |
   bes2 g4 |
   aes2 aes4 |
-  aes4. aes8 aes4 |
+  aes4. bes8 aes4 |
   aes2 r4 |
   bes2 g4 |
   aes2 aes4 |
-  aes4. aes8 aes4 |
+  aes4. bes8 aes4 |
   g2 r4 |
-  g2 bes4 |
-  aes4. aes8 g4 |
+  g2 g4 |
+  aes4. bes8 aes4 |
   f2. ( |
   ees2 ) r4 |
-  ees4 (c) ees |
-  des4. c8 bes4 |
+  g4 (ees) c |
+  des4. ees8 des4 |
   c2 r4 |
 }
 
@@ -617,13 +676,13 @@ vCaccCC = \relative c' {
   c4. des8 c4 |
   aes2 r4 |
   ees'2 ees4 |
-  ees4. ees8 ees4 |
-  ees2. ( |
-  des2 ) r4 |
+  e4. e8 e4 |
+  f2 ( ees4 |
+  d2 ) r4 |
   ees4 (c) aes |
-  bes4. aes8 g4 |
-  aes2. ~ |
-  aes2 r4 |
+  des4. bes8 g4 |
+  bes2. ~ |
+  bes2 r4 |
 }
 
 vCaccDA = \relative c'' {
@@ -896,38 +955,115 @@ vCaccFC = \relative c' {
 vCaccHA = \relative c'' {
   \key aes \major
   \time 3/4
-  g4. bes4. |
-  d4. (bes4.) |
-  g4. bes4. |
-  d4. (bes4.) |
+  r2 r8 bes ~ |
+  bes4. g |
+  f4 (g4.) r8 |
+  bes4. g |
+  f'2. |
+  des2. |
+  g4. f4. |
+  f4. (ees4.) |
+  ees4 (des2)  |
+  r4 d2 | %%%%%% stream
+  f4 d2 |
+  d4. c  |
+  ees2. |
+  r4 d2 |
+  f4 d2 |
+  d4. (ees) |
+  f2. ( |
+  g2. ~ |
+  g4 ) r4 f4 ~ |
+  f2 ees4~ |
+  ees2. ~ |
+  ees4 r8 
+  bes4. | g f |
+  ees2. \bar "|."
 }
 
-vCaccHB = \relative c' {
+vCaccHB = \relative c'' {
   \key aes \major
   \time 3/4
-  ees4. <f g>4. |
-  <aes bes>4. (f4.) |
+  r2 r8 g ~ |
+  g4. ees |
+  des4 (ees4.) r8 |
+  g4. ees |
+  des'2. |
+  c2. |
+  ees4. des |
+  des4. (c) |
+  c2. |
+  r4 c2 |
+  d4 bes2 |
+  bes4. aes |
+  des2. |
+  r4 c2 |
+  c4 c2 |
+  bes4. c |
+  ees2. ~ |
+  ees2. ~  |
+  ees4 r4 ees4 ~ |
+  ees2 c4 ~( |
+  c2. |
+  des4) r8 
+  g,4. | ees des |
+  c2. \bar "|."
 }
-
 vCaccHC = \relative c' {
   \key aes \major
   \time 3/4
-  c4. d4. |
-  fis4. (ees4.) |
+  r2 r8 ees ~ |
+  ees4. c |
+  bes4 (c4.) r8 |
+  ees4. c |
+  c'2. |
+  bes2. |
+  c4. c |
+  bes4. (a4.) |
+  bes2. |
+  r4 bes2 |
+  bes4 g2 |
+  g4. g |
+  bes2. |
+  r4 bes2 |
+  bes4 bes2 |
+  aes4. (a) |
+  des2. ( |
+  f ~ |
+  f4) r4 des4 ~ |
+  des2 aes4 ~ (|
+  aes2. |
+  bes4) r8
+  ees,4. | des c |
+  bes2. \bar "|."
 }
-
 vCaccHD = \relative c' {
   \key aes \major
   \time 3/4
-  bes4. b4. |
-  ees4. (des4.) |
-}
-
-vCaccHE = \relative c' {
-  \key aes \major
-  \time 3/4
-  aes4. g4. |
-  c4. (ces4.) |
+  r2 r8 c ~ |
+  c4. bes |
+  aes4 (bes4.) r8 |
+  c4. bes |
+  aes'4. (ees) |
+  f4. (ees) |
+  bes'4. bes |
+  ges2. |
+  aes2. |
+  r4 f2 |
+  g4 f2 |
+  ees4. f |
+  aes2. |
+  r4 f2 |
+  g4 g2 |
+  f4. (ges) |
+  c2. ~ |
+  c2. ~  |
+  c4  r4 g4 ~ |
+  g2 f4 ~ ( |
+  f2. |
+  g4) r8 
+  c,4. | c bes |
+  aes2. \bar "|."
 }
 
 lMelodyA = \lyricmode {
@@ -1006,6 +1142,18 @@ lvCaccFC = \lyricmode {
   Je -- sus Lord birth.
 }
 
+lvCaccHA = \lyricmode {
+  Si -- lent night,
+  ho -- ly
+  Shep -- herds at the sight.
+  Glo
+  stream
+  Glo -- ries stream a -- far
+  hosts
+  Hal -- le -- lu -- ia!
+  is born.
+  Sa -- vior is born.
+}
 
 \include "longs.ly"
 
@@ -1017,75 +1165,11 @@ lvCaccFC = \lyricmode {
 >>
 
 
-\markup { \bold "Verse 1, Take 1" }
+\markup { \bold "Verse 1" }
 \noPageBreak
 \new ChoirStaff <<
   \new Staff { \new Voice = "melody" { \melodyA } }
   \new Lyrics \lyricsto "melody" { \lMelodyA }  
->>
-
-\markup { \bold "Verse 1, Take 2" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "melody" { \melodyA } }
-  \new Lyrics \lyricsto "melody" { \lMelodyA }  
-  \new Staff { \new Voice = "acc0" { \vAaccA } }
-  \new Lyrics \lyricsto "acc0" { \lMelodyA }  
->>
-
-\markup { \bold "Verse 1, Take 3" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "melody" { \melodyA } }
-  \new Lyrics \lyricsto "melody" { \lMelodyA }  
-  \new Staff { \new Voice = "acc0" { \vAaccB } }
-  \new Lyrics \lyricsto "acc0" { \lMelodyA }  
->>
-
-
-\markup { \bold "Verse 1, Take 4" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "melody" { \melodyA } }
-  \new Lyrics \lyricsto "melody" { \lMelodyA }  
-  \new Staff { \new Voice = "acc0" { \vAaccC } }
-  \new Lyrics \lyricsto "acc0" { \lMelodyA }  
->>
-
-\markup { \bold "Verse 1, Take 5" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "melody" { \melodyA } }
-  \new Lyrics \lyricsto "melody" { \lMelodyA }  
-  \new Staff { \new Voice = "acc0" { \vAaccD } }
-  \new Lyrics \lyricsto "acc0" { \lMelodyA }  
->>
-
-\markup { \bold "Verse 1, Take 6" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "melody" { \melodyA } }
-  \new Lyrics \lyricsto "melody" { \lMelodyA }  
-  \new Staff { \new Voice = "acc0" { \vAaccE } }
-  \new Lyrics \lyricsto "acc0" { \lMelodyA }  
->>
-
-\markup { \bold "Verse 1, Take 7" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "melody" { \melodyA } }
-  \new Lyrics \lyricsto "melody" { \lMelodyA }  
-  \new Staff { \new Voice = "acc0" { \vAaccF } }
-  \new Lyrics \lyricsto "acc0" { \lvAaccF }  
->>
-
-\markup { \bold "Verse 1, Take 8" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "melody" { \melodyA } }
-  \new Lyrics \lyricsto "melody" { \lMelodyA }  
-  \new Staff { \new Voice = "acc0" { \vAaccG } }
-  \new Lyrics \lyricsto "acc0" { \lMelodyA }  
 >>
 
 
@@ -1094,10 +1178,50 @@ lvCaccFC = \lyricmode {
 \new ChoirStaff <<
   \new Staff { \new Voice = "melody" { \melodyB } }
   \new Lyrics \lyricsto "melody" { \lMelodyB }  
+  \new Staff { \new Voice = "chimes" \relative c'' {  \key aes \major
+  \time 3/4
+ r4 aes2 ~
+  aes4 ees2 |  r4 aes2 ~ | aes4 ees2 | r4 des'2 ~ | des4 bes2 | r4 c2 ~ | c4 aes2 |
+  r4 aes2 ~ | aes4 bes2 ~ | bes4 c2 ~ | c4 aes2 | r4 aes2 ~ | aes4 bes2 ~ | bes4 g2 ~ | g4 aes2 ~ | aes4 g f | g ees2 | r4 c2 ( ~ | c4 ees2) | r4 c2 | r4 g'2 | r4 c2 ( | aes2) r4 |
+
+   } }
+  \new Lyrics \lyricsto "chimes"  {
+    Si -- lent ho -- ly Shep -- herds at the
+    Glo -- ries hea -- ven
+    Hal -- le -- lu -- ia Christ the Sa -- vior
+    Born. Christ is Born.
+  }  
+
 >>
 
+\markup { \bold "Verse 2, Take 2" }
+\noPageBreak
+\new ChoirStaff <<
+  \new Staff { \new Voice = "melody" { \melodyB } }
+  \new Lyrics \lyricsto "melody" { \lMelodyB } 
+  \new Staff { \new Voice = "harmA" { \vBaccA } }
+  \new Lyrics \lyricsto "harmA" { \lMelodyB }  
+>>
 
 \markup { \bold "Verse 2, Take 2" }
+\noPageBreak
+\new ChoirStaff <<
+  \new Staff { \new Voice = "melody" { \melodyB } }
+  \new Lyrics \lyricsto "melody" { \lMelodyB } 
+  \new Staff { \new Voice = "harmA" { \vBaccCpt } }
+  \new Lyrics \lyricsto "harmA" { \lMelodyB }  
+>>
+
+\markup { \bold "Verse 2, Take 4" }
+\noPageBreak
+\new ChoirStaff <<
+  \new Staff { \new Voice = "melody" { \melodyB } }
+  \new Lyrics \lyricsto "melody" { \lMelodyB } 
+  \new Staff { \new Voice = "harmA" { \vBaccSimp } }
+  \new Lyrics \lyricsto "harmA" { \lMelodyB }  
+>>
+
+\markup { \bold "Verse 2, Take 5" }
 \noPageBreak
 \new ChoirStaff <<
   \new Staff { \new Voice = "harmA" { \vBaccAA } }
@@ -1108,7 +1232,21 @@ lvCaccFC = \lyricmode {
   \new Lyrics \lyricsto "harmB" { \lvBaccAB }  
 >>
 
-\markup { \bold "Verse 2, Take 3" }
+
+\markup { \bold "Verse 2, Take 6" }
+\noPageBreak
+\new ChoirStaff <<
+  \new Staff { \new Voice = "harmA" { \vCaccCA } }
+  \new Lyrics \lyricsto "harmA" { \lMelodyB }  
+  \new Staff { \new Voice = "harmB" { \vCaccCB } }
+  \new Lyrics \lyricsto "harmB" { \lMelodyB }  
+  \new Staff { \new Voice = "melody" { \melodyC } }
+  \new Lyrics \lyricsto "melody" { \lMelodyB }
+  \new Staff { \new Voice = "harmC" { \vCaccCC } }
+  \new Lyrics \lyricsto "harmC" { \lMelodyB }  
+>>
+
+\markup { \bold "Verse 2, Take 7" }
 \noPageBreak
 \new ChoirStaff <<
   \new Staff { \new Voice = "harmA" { \vBaccBA } }
@@ -1119,7 +1257,31 @@ lvCaccFC = \lyricmode {
   \new Lyrics \lyricsto "melody" { \lMelodyB }  
 >>
 
-\markup { \bold "Verse 3, Take 1" }
+\markup { \bold "Verse 2, Take 8" }
+\noPageBreak
+\new Score <<
+  \new Staff \with { \magnifyStaff #2/3 } { \new Voice = "melody" { \melodyB } }
+  \new Lyrics  \lyricsto "melody" { \set fontSize = #-2 \lMelodyB }
+  \new ChoirStaff <<
+    \new Staff { \new Voice = "harmA" { \vCaccHA } }
+    \new Lyrics \lyricsto "harmA" { \lvCaccHA }  
+    \new Staff { \new Voice = "harmB" { \vCaccHB } }
+    \new Lyrics \lyricsto "harmB" { \lvCaccHA }
+    \new Staff { \new Voice = "harmC" { \vCaccHC } }
+    \new Lyrics \lyricsto "harmC" { \lvCaccHA }  
+    \new Staff { \new Voice = "harmD" { \vCaccHD } }
+    \new Lyrics \lyricsto "harmD" { \lvCaccHA }  
+  >>
+>>
+
+\markup { \bold "Verse 3" }
+\noPageBreak
+\new ChoirStaff <<
+  \new Staff { \new Voice = "melody" { \melodyC } }
+  \new Lyrics \lyricsto "melody" { \lMelodyC }  
+>>
+
+\markup { \bold "Verse 3 :: Alt 1" }
 \noPageBreak
 \new ChoirStaff <<
   \new Staff { \new Voice = "melody" { \melodyC } }
@@ -1130,47 +1292,7 @@ lvCaccFC = \lyricmode {
   \new Lyrics \lyricsto "harmB" { \lMelodyC }  
 >>
 
-\markup { \bold "Verse 3, Take 2" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "harmA" { \vCaccBA } }
-  \new Lyrics \lyricsto "harmA" { \lMelodyC }  
-  \new Staff { \new Voice = "harmB" { \vCaccBB } }
-  \new Lyrics \lyricsto "harmB" { \lMelodyC }  
-  \new Staff { \new Voice = "melody" { \melodyC } }
-  \new Lyrics \lyricsto "melody" { \lMelodyC }
-  \new Staff { \new Voice = "harmC" { \vCaccBC } }
-  \new Lyrics \lyricsto "harmC" { \lMelodyC }  
->>
-
-\markup { \bold "Verse 3, Take 3" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "harmA" { \vCaccCA } }
-  \new Lyrics \lyricsto "harmA" { \lMelodyC }  
-  \new Staff { \new Voice = "harmB" { \vCaccCB } }
-  \new Lyrics \lyricsto "harmB" { \lMelodyC }  
-  \new Staff { \new Voice = "melody" { \melodyC } }
-  \new Lyrics \lyricsto "melody" { \lMelodyC }
-  \new Staff { \new Voice = "harmC" { \vCaccCC } }
-  \new Lyrics \lyricsto "harmC" { \lMelodyC }  
->>
-
-
-\markup { \bold "Verse 3, Take 4" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "harmA" { \vCaccDA } }
-  \new Lyrics \lyricsto "harmA" { \lMelodyC }  
-  \new Staff { \new Voice = "melody" { \melodyC } }
-  \new Lyrics \lyricsto "melody" { \lMelodyC }
-  \new Staff { \new Voice = "harmB" { \vCaccDB } }
-  \new Lyrics \lyricsto "harmB" { \lMelodyC }  
-  \new Staff { \new Voice = "harmC" { \vCaccDC } }
-  \new Lyrics \lyricsto "harmC" { \lMelodyC }  
->>
-
-\markup { \bold "Verse 3, Take 5" }
+\markup { \bold "Verse 3 :: Alt 2" }
 \noPageBreak
 \new ChoirStaff <<
   \new Staff { \new Voice = "melody" { \melodyC } }
@@ -1183,36 +1305,7 @@ lvCaccFC = \lyricmode {
   \new Lyrics \lyricsto "harmC" { \lMelodyC }  
 >>
 
-\markup { \bold "Verse 3, Take 6" }
-\noPageBreak
-\new ChoirStaff <<
-  \new Staff { \new Voice = "harmA" { \vCaccFA } }
-  \new Lyrics \lyricsto "harmA" { \lMelodyC }  
-  \new Staff { \new Voice = "melody" { \melodyC } }
-  \new Lyrics \lyricsto "melody" { \lMelodyC }
-  \new Staff { \new Voice = "harmB" { \vCaccFB } }
-  \new Lyrics \lyricsto "harmB" { \lvCaccFB }  
-  \new Staff { \new Voice = "harmC" { \vCaccFC } }
-  \new Lyrics \lyricsto "harmC" { \lvCaccFC }  
->>
 
-\markup { \bold "Verse 3, Take 8" }
-\noPageBreak
-\new Score <<
-  \new Staff \with { \magnifyStaff #2/3 } { \new Voice = "melody" { \melodyC } }
-  \new ChoirStaff <<
-    \new Staff { \new Voice = "harmA" { \vCaccHA } }
-    \new Lyrics \lyricsto "harmA" { \lMelodyC }  
-    \new Staff { \new Voice = "harmB" { \vCaccHB } }
-    \new Lyrics \lyricsto "harmB" { \lMelodyC }
-    \new Staff { \new Voice = "harmC" { \vCaccHC } }
-    \new Lyrics \lyricsto "harmC" { \lMelodyC }  
-    \new Staff { \new Voice = "harmD" { \vCaccHD } }
-    \new Lyrics \lyricsto "harmD" { \lMelodyC }  
-    \new Staff { \new Voice = "harmE" { \vCaccHE } }
-    \new Lyrics \lyricsto "harmE" { \lMelodyC }  
-  >>
->>
 
 
 % one could start with <c ees f a>   --- then <a c d fis> ?
