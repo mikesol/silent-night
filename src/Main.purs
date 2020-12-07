@@ -2,11 +2,12 @@ module Klank.SilentNight where
 
 import Prelude
 import Color (Color, rgb, rgba)
-import Control.Monad.Reader (Reader, ask, runReader)
+import Control.Monad.Reader (Reader, ask, asks, runReader)
 import Control.Parallel (parallel, sequential)
 import Control.Promise (toAffE)
 import Data.Array (catMaybes, drop, filter, fold, head, range, zip)
 import Data.Array as A
+import Data.NonEmpty as NE
 import Data.DateTime.Instant (unInstant)
 import Data.Either (Either(..), either)
 import Data.Foldable (class Foldable, foldl, traverse_)
@@ -24,11 +25,12 @@ import Data.NonEmpty (NonEmpty, (:|))
 import Data.Profunctor (lcmap)
 import Data.Profunctor.Choice (class Choice)
 import Data.Profunctor.Strong (class Strong)
+import Data.Set as DS
 import Data.String (Pattern(..), indexOf)
 import Data.Symbol (SProxy(..))
 import Data.Traversable (sequence)
 import Data.Tuple (Tuple(..), fst, snd, uncurry)
-import Data.Typelevel.Num (D2, D3, D4, D6, d0, d1, d2, d3, d4, d5)
+import Data.Typelevel.Num (D2, D3, D4, D6, D8, d0, d1, d2, d3, d4, d5, d6, d7)
 import Data.Vec (Vec, empty, fill, (+>))
 import Data.Vec as V
 import Debug.Trace (spy)
@@ -363,13 +365,12 @@ triangleSound tp dimT gp =
 
 triangle' :: Number -> MusicM AudioListD2
 triangle' btm = do
-  ai@{ musicalInfo } <- ask
+  { musicalInfo } <- ask
+  v <- asks getTriangleVector
   let
     mmm1 = musicalInfo { measure = musicalInfo.measure `mod` 1 }
 
     ffm = roundUpTimeToNextMeasure btm
-
-    v = getTriangleVector ai :: Maybe (Vec D3 (Maybe Number))
 
     top = join $ flip V.index d0 <$> v
 
@@ -407,56 +408,341 @@ triangle' btm = do
 triangle :: MusicM AudioListD2
 triangle = boundedEffect getTriangleBegTime getTriangleEndTime triangle'
 
+data SquarePos
+  = SquarePosTopLeft
+  | SquarePosTopRight
+  | SquarePosBottomLeft
+  | SquarePosBottomRight
+
+emptySoundListToBeFilled = pure Nil
+
+squareSound :: SquarePos -> Number -> MusicM AudioListD2
+squareSound tp st = emptySoundListToBeFilled
+
+squareP :: SquarePos -> Number -> MusicM AudioListD2
+squareP sp t = boundPlayer t 5.0 (squareSound sp t)
+
+squareEnd :: Number -> MusicM AudioListD2
+squareEnd t = boundPlayer t 5.0 emptySoundListToBeFilled
+
 square' :: Number -> MusicM AudioListD2
-square' _ = pure Nil
+square' btm = do
+  { musicalInfo } <- ask
+  v <- asks getSquareVector
+  let
+    topLeft = (squareP SquarePosTopLeft) <$> (join $ flip V.index d0 <$> v)
+
+    topRight = (squareP SquarePosTopRight) <$> (join $ flip V.index d1 <$> v)
+
+    bottomLeft = (squareP SquarePosBottomLeft) <$> (join $ flip V.index d2 <$> v)
+
+    bottomRight = (squareP SquarePosBottomRight) <$> (join $ flip V.index d3 <$> v)
+
+    endSound = (squareEnd <<< (_ + squareTravel) <<< foldl max 0.0) <$> (join (sequence <$> v))
+  fold
+    <$> sequence
+        ( catMaybes
+            [ topLeft, topRight, bottomLeft, bottomRight, endSound
+            ]
+        )
 
 square :: MusicM AudioListD2
 square = boundedEffect getSquareBegTime getSquareEndTime square'
 
 motion' :: Number -> MusicM AudioListD2
-motion' _ = pure Nil
+motion' st = do
+  velocity <-
+    ( case _ of
+        Nothing -> 0.0
+        Just (Tuple { x: x0, y: y0 } { x: x1, y: y1 }) -> (pythag (x1 - x0) (y1 - y0)) / kr
+    )
+      <$> asks getMotionPoints
+  emptySoundListToBeFilled
 
 motion :: MusicM AudioListD2
 motion = boundedEffect getMotionBegTime getMotionEndTime motion'
 
+data GearPos
+  = GearOne
+  | GearTwo
+  | GearThree
+  | GearFour
+
+gearSound :: Maybe Number -> GearPos -> Number -> MusicM AudioListD2
+gearSound fadeOutT pos startT = emptySoundListToBeFilled
+
+gearsP :: Maybe Number -> GearPos -> Number -> MusicM AudioListD2
+gearsP fadeOutT pos startT = boundPlayer startT 10000.0 (gearSound fadeOutT pos startT)
+
 gears' :: Number -> MusicM AudioListD2
-gears' _ = pure Nil
+gears' btm = do
+  { musicalInfo } <- ask
+  v <- asks getGearsVector
+  let
+    fadeOutStarts = (foldl max 0.0) <$> (join (sequence <$> v))
+
+    gp = gearsP fadeOutStarts
+
+    one = (gp GearOne) <$> (join $ flip V.index d0 <$> v)
+
+    two = (gp GearTwo) <$> (join $ flip V.index d1 <$> v)
+
+    three = (gp GearThree) <$> (join $ flip V.index d2 <$> v)
+
+    four = (gp GearFour) <$> (join $ flip V.index d3 <$> v)
+  fold
+    <$> sequence
+        ( catMaybes
+            [ one, two, three, four ]
+        )
 
 gears :: MusicM AudioListD2
 gears = boundedEffect getGearsBegTime getGearsEndTime gears'
 
+data LargeTrack
+  = Large0
+  | Large1
+  | Large2
+  | Large3
+  | Large4
+
+largeSingleton :: Number -> LargeTrack -> Maybe Number -> MusicM AudioListD2
+largeSingleton st ltrack ed = emptySoundListToBeFilled
+
+fiveLarges :: Int -> Number -> Number -> Number -> Number -> Number -> MusicM AudioListD2
+fiveLarges nfilt d c b a st =
+  fold
+    <$> sequence [ largeSingleton d Large4 Nothing, largeSingleton c Large3 (Just d), largeSingleton b Large2 (Just c), largeSingleton a Large1 (Just b), largeSingleton st Large0 (Just a) ]
+
+-- piece start, large start
+largeListF :: Number -> Number -> List Number -> MusicM AudioListD2
+largeListF pst st Nil = largeSingleton st Large0 Nothing
+
+largeListF pst st (a : Nil) =
+  fold
+    <$> sequence
+        [ largeSingleton a Large1 Nothing, largeSingleton st Large0 (Just a) ]
+
+largeListF pst st (b : a : Nil) =
+  fold
+    <$> sequence
+        [ largeSingleton b Large2 Nothing, largeSingleton a Large1 (Just b), largeSingleton st Large0 (Just a) ]
+
+largeListF pst st (c : b : a : Nil) =
+  fold
+    <$> sequence
+        [ largeSingleton c Large3 Nothing, largeSingleton b Large2 (Just c), largeSingleton a Large1 (Just b), largeSingleton st Large0 (Just a) ]
+
+largeListF pst st (d : c : b : a : Nil) = fiveLarges 0 d c b a st
+
+largeListF pst st (e : d : c : b : a : Nil) = fiveLarges 1 d c b a st
+
+largeListF pst st (f : e : d : c : b : a : Nil) = fiveLarges 2 d c b a st
+
+largeListF pst st (g : f : e : d : c : b : a : Nil) = fiveLarges 3 d c b a st
+
+largeListF pst st (h : g : f : e : d : c : b : a : Nil) = fiveLarges 4 d c b a st
+
+largeListF pst st (i : h : g : f : e : d : c : b : a : Nil) = fiveLarges 5 d c b a st
+
+largeListF pst st (j : i : h : g : f : e : d : c : b : a : Nil) = fiveLarges 6 d c b a st
+
+largeListF pst st (k : j : i : h : g : f : e : d : c : b : a : Nil) = fiveLarges 7 d c b a st
+
+-- ignore anything larger than 7 filters
+-- even this is probably too big...
+largeListF pst st (foo : bar) = largeListF pst st bar
+
 large' :: Number -> MusicM AudioListD2
-large' _ = pure Nil
+large' begT = do
+  { musicalInfo, mainStarts } <- ask
+  case mainStarts of
+    Nothing -> pure Nil
+    Just mst -> do
+      ll <- fromMaybe Nil <$> asks getLargeList
+      largeListF mst begT ll
 
 large :: MusicM AudioListD2
 large = boundedEffect getLargeBegTime getLargeEndTime large'
 
+snowSingleton :: Number -> MusicM AudioListD2
+snowSingleton st = boundPlayer st 4.0 emptySoundListToBeFilled
+
+snowAudio :: List (Maybe Number) -> MusicM AudioListD2
+snowAudio l = fold <$> sequence (go 0 l)
+  where
+  go :: Int -> List (Maybe Number) -> List (MusicM AudioListD2)
+  go i Nil = Nil
+
+  go i (Nothing : b) = go (i + 1) b
+
+  go i (Just a : b) = snowSingleton a : go (i + 1) b
+
 snow' :: Number -> MusicM AudioListD2
-snow' _ = pure Nil
+snow' begT = (fromMaybe baseSnows <$> asks getSnowList) >>= snowAudio
 
 snow :: MusicM AudioListD2
 snow = boundedEffect getSnowBegTime getSnowEndTime snow'
 
+safeSustainTo8Wide :: NonEmpty List PitchClass -> Vec D8 (Tuple Int PitchClass)
+safeSustainTo8Wide nel = atInL 0 +> atInL 1 +> atInL 2 +> atInL 3 +> atInL 4 +> atInL 5 +> atInL 6 +> atInL 7 +> empty
+  where
+  dflt = NE.head nel
+
+  asL = L.fromFoldable (DS.fromFoldable (dflt : NE.tail nel))
+
+  ll = L.length asL
+
+  atInL i = Tuple (i `div` ll) (fromMaybe dflt (L.index asL $ i `mod` ll))
+
+data BellInstrument
+  = BellInstrument0
+  | BellInstrument1
+  | BellInstrument2
+  | BellInstrument3
+
+i2bi :: Int -> BellInstrument
+i2bi 0 = BellInstrument0
+
+i2bi 1 = BellInstrument1
+
+i2bi 2 = BellInstrument2
+
+i2bi 3 = BellInstrument3
+
+i2bi _ = BellInstrument0
+
+i2tip :: Int -> Vec D8 (Tuple Int PitchClass) -> Tuple Int PitchClass
+i2tip 0 v = V.index v d0
+
+i2tip 1 v = V.index v d1
+
+i2tip 2 v = V.index v d2
+
+i2tip 3 v = V.index v d3
+
+i2tip 4 v = V.index v d4
+
+i2tip 5 v = V.index v d5
+
+i2tip 6 v = V.index v d6
+
+i2tip 7 v = V.index v d7
+
+i2tip _ v = V.index v d0
+
+singleBell' :: BellInstrument -> Tuple Int PitchClass -> MusicM AudioListD2
+singleBell' bi (Tuple oct pc) = emptySoundListToBeFilled
+
+singleBell :: Vec D8 (Tuple Int PitchClass) -> Int -> List Number -> List (MusicM AudioListD2)
+singleBell v i a = map (\inc -> boundPlayer inc 2.0 (singleBell' (i2bi (i `div` 8)) (i2tip (i `mod` 8) v))) a
+
+bellAudio :: Vec D8 (Tuple Int PitchClass) -> List (List Number) -> MusicM AudioListD2
+bellAudio v l = fold <$> sequence (join $ go 0 l)
+  where
+  go :: Int -> List (List Number) -> List (List (MusicM AudioListD2))
+  go i Nil = pure Nil
+
+  go i (a : b) = singleBell v i a : go i b
+
 bells' :: Number -> MusicM AudioListD2
-bells' _ = pure Nil
+bells' begT = do
+  { time, mainStarts } <- ask
+  case mainStarts of
+    Nothing -> pure Nil
+    Just ms -> do
+      bellsL <- fromMaybe baseBells <$> asks getBellsList
+      let
+        placeInPiece = timeToMusicalInfo (time - ms)
+
+        twoBeatsAhead
+          | placeInPiece.beat >= 1.0 = { measure: placeInPiece.measure + 1, beat: (placeInPiece.beat + 2.0) % 3.0 }
+          | otherwise = { measure: placeInPiece.measure, beat: placeInPiece.beat + 2.0 }
+
+        ss = safeSustainTo8Wide (safeSustain' placeInPiece twoBeatsAhead)
+      bellAudio ss bellsL
 
 bells :: MusicM AudioListD2
 bells = boundedEffect getBellsBegTime getBellsEndTime bells'
 
+data ShrinkPos
+  = ShrinkOne
+  | ShrinkTwo
+  | ShrinkThree
+  | ShrinkFour
+  | ShrinkFive
+  | ShrinkSix
+
+shrinkP :: ShrinkPos -> Number -> Number -> MusicM AudioListD2
+shrinkP rp startT currentShrinkPlace = emptySoundListToBeFilled
+
 shrink' :: Number -> MusicM AudioListD2
-shrink' _ = pure Nil
+shrink' btm = do
+  { musicalInfo } <- ask
+  v' <- asks getShrinkVector
+  case v' of
+    Nothing -> pure Nil
+    Just v -> do
+      let
+        one = shrinkP ShrinkOne btm (V.index v d0)
+
+        two = shrinkP ShrinkTwo btm (V.index v d1)
+
+        three = shrinkP ShrinkThree btm (V.index v d2)
+
+        four = shrinkP ShrinkFour btm (V.index v d3)
+
+        five = shrinkP ShrinkFive btm (V.index v d4)
+
+        six = shrinkP ShrinkSix btm (V.index v d5)
+      fold
+        <$> sequence
+            [ one, two, three, four, five, six ]
 
 shrink :: MusicM AudioListD2
 shrink = boundedEffect getShrinkBegTime getShrinkEndTime shrink'
 
+data RisePos
+  = RiseOne
+  | RiseTwo
+  | RiseThree
+  | RiseFour
+  | RiseFive
+  | RiseSix
+
+riseP :: RisePos -> Number -> Maybe Number -> MusicM AudioListD2
+riseP rp startT didStop = emptySoundListToBeFilled
+
 rise' :: Number -> MusicM AudioListD2
-rise' _ = pure Nil
+rise' btm = do
+  { musicalInfo } <- ask
+  v <- asks getRiseVector
+  let
+    one = riseP RiseOne btm (join $ flip V.index d0 <$> v)
+
+    two = riseP RiseTwo btm (join $ flip V.index d1 <$> v)
+
+    three = riseP RiseThree btm (join $ flip V.index d2 <$> v)
+
+    four = riseP RiseFour btm (join $ flip V.index d3 <$> v)
+
+    five = riseP RiseFive btm (join $ flip V.index d4 <$> v)
+
+    six = riseP RiseSix btm (join $ flip V.index d5 <$> v)
+  fold
+    <$> sequence
+        [ one, two, three, four, five, six ]
 
 rise :: MusicM AudioListD2
 rise = boundedEffect getRiseBegTime getRiseEndTime rise'
 
 heart' :: Number -> MusicM AudioListD2
-heart' _ = pure Nil
+heart' btm = do
+  { musicalInfo } <- ask
+  v <- asks getHeartStartTime
+  case v of
+    Nothing -> pure Nil
+    Just t -> boundPlayer t 20.0 emptySoundListToBeFilled
 
 heart :: MusicM AudioListD2
 heart = boundedEffect getHeartBegTime getHeartEndTime heart'
@@ -511,9 +797,39 @@ data PitchClass
   | Gb
   | G
 
+pc2i :: PitchClass -> Int
+pc2i Ab = 0
+
+pc2i A = 1
+
+pc2i Bb = 2
+
+pc2i Cb = 3
+
+pc2i C = 4
+
+pc2i Db = 5
+
+pc2i D = 6
+
+pc2i Eb = 7
+
+pc2i Fb = 8
+
+pc2i F = 9
+
+pc2i Gb = 10
+
+pc2i G = 11
+
 derive instance eqPitchClass :: Eq PitchClass
 
-codaStarts = musicalInfoToTime { measure: 82, beat: 0.0 } :: Number
+instance ordPitchClass :: Ord PitchClass where
+  compare a b = compare (pc2i a) (pc2i b)
+
+codaStartsMI = { measure: 82, beat: 0.0 } :: MusicalInfo
+
+codaStarts = musicalInfoToTime codaStartsMI :: Number
 
 measureMinus :: MusicalInfo -> Int -> MusicalInfo
 measureMinus { measure, beat } i = { measure: measure - i, beat }
@@ -631,19 +947,24 @@ middleSafeSustain ma mb
   | ma.measure < 26 = middleSafeSustain_25_26 ma mb
   | otherwise = Ab :| Nil
 
+safeSustain' :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
+safeSustain' ma mb =
+  let
+    sus
+      | ma.measure < 4 = introSafeSustain ma mb
+      | ma.measure >= 82 = endSafeSustain ((musicalInfoToTime ma) - codaStarts)
+      | otherwise = middleSafeSustain (measureMinus (measureMinus ma $ 26 * (ma.measure `div` 26)) 4) (measureMinus (measureMinus mb $ 26 * (ma.measure `div` 26)) 4)
+  in
+    sus
+
 safeSustain :: Number -> Number -> NonEmpty List PitchClass
 safeSustain a b =
   let
     ma = timeToMusicalInfo a
 
     mb = timeToMusicalInfo b
-
-    sus
-      | ma.measure < 4 = introSafeSustain ma mb
-      | ma.measure >= 82 = endSafeSustain (a - codaStarts)
-      | otherwise = middleSafeSustain (measureMinus (measureMinus ma $ 26 * (ma.measure `div` 26)) 4) (measureMinus (measureMinus mb $ 26 * (ma.measure `div` 26)) 4)
   in
-    sus
+    safeSustain' ma mb
 
 ------
 pcToRefMidi :: PitchClass -> Number
@@ -674,6 +995,9 @@ pcToRefMidi G = 67.0
 conv440 :: Number -> Number
 conv440 i = 440.0 * (2.0 `pow` ((i - 69.0) / 12.0))
 
+pythag :: Number -> Number -> Number
+pythag x y = ((x `pow` 2.0) + (y `pow` 2.0)) `pow` 0.5
+
 conv1 :: Number -> Number
 conv1 i = 1.0 * (2.0 `pow` ((i - 0.0) / 12.0))
 
@@ -686,13 +1010,10 @@ loopT t = lcmap (_ % t)
 foldOverTime :: forall a b f. Foldable f => Applicative f => Monoid (f b) => (Number -> a -> b) -> (a -> Number) -> f a -> f b
 foldOverTime trans getn = _.acc <<< foldl (\{ acc, clen } a -> { acc: acc <> (pure $ trans clen a), clen: clen + getn a }) { acc: mempty, clen: 0.0 }
 
-boundPlayer :: Number -> Number -> MusicM AudioListD2 -> MusicM AudioListD2
+boundPlayer :: Number -> Number -> (MusicM AudioListD2) -> MusicM AudioListD2
 boundPlayer st len a = do
   { time } <- ask
   if time + kr >= st && time < (st + len) then a else pure Nil
-
-overZeroPlayer :: Number -> MusicM AudioListD2 -> MusicM AudioListD2
-overZeroPlayer st = boundPlayer st 100000.0 -- large enough...
 
 skewedTriangle01 :: Number -> Number -> Number -> Number
 skewedTriangle01 os len = lcmap (_ % len) go
@@ -1001,6 +1322,8 @@ squareEndTimeBleed = standardEndTimeBleed :: Number
 
 getSquareBegTime = getBegTime squareLens :: BegTimeGetter
 
+getSquareVector = getInter squareLens :: AccumulatorGetter (Vec D4 (Maybe Number))
+
 getSquareEndTime = getEndTime squareLens :: EndTimeGetter
 
 setSquareBegTime = setBegTime squareLens :: BegTimeSetter
@@ -1015,11 +1338,16 @@ motionLens = amark <<< prop (SProxy :: SProxy "motion")
 
 getMotionBegTime = getBegTime motionLens :: BegTimeGetter
 
+getMotionPoints = getInter motionLens :: AccumulatorGetter (Tuple Point Point)
+
 getMotionEndTime = getEndTime motionLens :: EndTimeGetter
 
 setMotionBegTime = setBegTime motionLens :: BegTimeSetter
 
-setMotionPoints = setInter motionLens :: AccumulatorSetter (Tuple Point Point)
+normalizePoints :: Number -> Number -> Tuple Point Point -> Tuple Point Point
+normalizePoints w h (Tuple { x: x0, y: y0 } { x: x1, y: y1 }) = Tuple { x: x0 / w, y: y0 / h } { x: x1 / w, y: y1 / h }
+
+setMotionPoints w h p acc = setInter motionLens (normalizePoints w h p) acc -- :: Number -> Number -> AccumulatorSetter (Tuple Point Point)
 
 setMotionEndTime = setEndTime motionLens :: EndTimeSetter
 
@@ -1028,6 +1356,8 @@ riseEndTimeBleed = standardEndTimeBleed :: Number
 riseLens = amark <<< prop (SProxy :: SProxy "rise")
 
 getRiseBegTime = getBegTime riseLens :: BegTimeGetter
+
+getRiseVector = getInter riseLens :: AccumulatorGetter (Vec D6 (Maybe Number))
 
 getRiseEndTime = getEndTime riseLens :: EndTimeGetter
 
@@ -1043,6 +1373,8 @@ largeLens = amark <<< prop (SProxy :: SProxy "large")
 
 getLargeBegTime = getBegTime largeLens :: BegTimeGetter
 
+getLargeList = getInter largeLens :: AccumulatorGetter (List Number)
+
 getLargeEndTime = getEndTime largeLens :: EndTimeGetter
 
 setLargeBegTime = setBegTime largeLens :: BegTimeSetter
@@ -1056,6 +1388,8 @@ bellsEndTimeBleed = standardEndTimeBleed :: Number
 bellsLens = amark <<< prop (SProxy :: SProxy "bells")
 
 getBellsBegTime = getBegTime bellsLens :: BegTimeGetter
+
+getBellsList = getInter bellsLens :: AccumulatorGetter (List (List Number))
 
 getBellsEndTime = getEndTime bellsLens :: EndTimeGetter
 
@@ -1071,6 +1405,8 @@ gearsLens = amark <<< prop (SProxy :: SProxy "gears")
 
 getGearsBegTime = getBegTime gearsLens :: BegTimeGetter
 
+getGearsVector = getInter gearsLens :: AccumulatorGetter (Vec D4 (Maybe Number))
+
 getGearsEndTime = getEndTime gearsLens :: EndTimeGetter
 
 setGearsBegTime = setBegTime gearsLens :: BegTimeSetter
@@ -1084,6 +1420,8 @@ shrinkEndTimeBleed = standardEndTimeBleed :: Number
 shrinkLens = amark <<< prop (SProxy :: SProxy "shrink")
 
 getShrinkBegTime = getBegTime shrinkLens :: BegTimeGetter
+
+getShrinkVector = getInter shrinkLens :: AccumulatorGetter (Vec D6 Number)
 
 getShrinkEndTime = getEndTime shrinkLens :: EndTimeGetter
 
@@ -1099,6 +1437,8 @@ snowLens = amark <<< prop (SProxy :: SProxy "snow")
 
 getSnowBegTime = getBegTime snowLens :: BegTimeGetter
 
+getSnowList = getInter snowLens :: AccumulatorGetter (List (Maybe Number))
+
 getSnowEndTime = getEndTime snowLens :: EndTimeGetter
 
 setSnowBegTime = setBegTime snowLens :: BegTimeSetter
@@ -1112,6 +1452,8 @@ heartEndTimeBleed = standardEndTimeBleed :: Number
 heartLens = amark <<< prop (SProxy :: SProxy "heart")
 
 getHeartBegTime = getBegTime heartLens :: BegTimeGetter
+
+getHeartStartTime = getInter heartLens :: AccumulatorGetter Number
 
 getHeartEndTime = getEndTime heartLens :: EndTimeGetter
 
@@ -2161,8 +2503,6 @@ makeCanvas acc time = do
 
             cg3 = 1.8 * pi
 
-            pythag x y = ((x `pow` 2.0) + (y `pow` 2.0)) `pow` 0.5
-
             nextGear = nextObj Gears
 
             dArc cc =
@@ -2248,6 +2588,8 @@ makeCanvas acc time = do
 
             textNormal = 1.0
 
+            smp = setMotionPoints w h
+
             instr
               | time < i.eventStart + standardIntro + textNormal + standardOutro =
                 let
@@ -2292,9 +2634,9 @@ makeCanvas acc time = do
 
                       newPt = Right (Tuple npt oss)
                     in
-                      motionMaker (Motion (Just ppt) newPt) newX newY cw (setMotionPoints (Tuple ppt npt) acc) i instr time
+                      motionMaker (Motion (Just ppt) newPt) newX newY cw (smp (Tuple ppt npt) acc) i instr time
                   else
-                    let npt = { x: xp, y: yp } in motionMaker (Motion prevT lr) xp yp cw (setMotionPoints (Tuple (fromMaybe npt prevT) npt) acc) i instr time
+                    let npt = { x: xp, y: yp } in motionMaker (Motion prevT lr) xp yp cw (smp (Tuple (fromMaybe npt prevT) npt) acc) i instr time
                 Right (Tuple old offset) ->
                   if needsToStopFollowing acc lr then
                     let
@@ -2304,9 +2646,9 @@ makeCanvas acc time = do
 
                       nyp = (eiy h acc newPt)
                     in
-                      motionMaker (Motion (Just old) newPt) nxp nyp cw (setMotionPoints (Tuple old { x: nxp, y: nyp }) acc) i instr time
+                      motionMaker (Motion (Just old) newPt) nxp nyp cw (smp (Tuple old { x: nxp, y: nyp }) acc) i instr time
                   else
-                    let npt = { x: xp, y: yp } in motionMaker (Motion (Just old) (Right (Tuple npt offset))) xp yp cw (setMotionPoints (Tuple old npt) acc) i instr time
+                    let npt = { x: xp, y: yp } in motionMaker (Motion (Just old) (Right (Tuple npt offset))) xp yp cw (smp (Tuple old npt) acc) i instr time
           in
             o
         Rise v ->
@@ -2566,16 +2908,20 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
         , verseStarts: vizAcc.verseStarts
         }
 
+baseSnows = L.fromFoldable $ A.replicate snowL Nothing :: List (Maybe Number)
+
+baseBells = L.fromFoldable $ A.replicate 24 Nil :: List (List Number)
+
 allPlayerEvent =
   [ Triangle (fill (const Nothing))
   , Square (fill (const Nothing))
   , Motion Nothing (Left { x: 0.18, y: 0.18 })
   , Rise (fill (const Nothing))
   , Large Nil
-  , Bells (L.fromFoldable $ A.replicate 24 Nil)
+  , Bells baseBells
   , Gears (fill (const Nothing))
   , Shrink shrinkStart
-  , Snow (L.fromFoldable $ A.replicate snowL Nothing)
+  , Snow baseSnows
   ] ::
     Array PlayerEvent
 
