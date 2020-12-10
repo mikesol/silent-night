@@ -387,17 +387,20 @@ verses = do
     )
     mainStarts
 
-boundedEffect :: (AudioEnv -> Maybe Number) -> (AudioEnv -> Maybe Number) -> (Number -> MusicM AudioListD2) -> MusicM AudioListD2
-boundedEffect begt endt a = do
+-- debug end flipping to start
+-- market too long
+-- birds too long
+boundedEffect :: String -> (AudioEnv -> Maybe Number) -> (AudioEnv -> Maybe Number) -> (Number -> MusicM AudioListD2) -> MusicM AudioListD2
+boundedEffect tag begt endt a = do
   audEnv <- ask
   let
     bt = begt audEnv
   maybe mempty
     ( \x -> case endt audEnv of
-        Nothing -> a x
+        Nothing ->  a x
         Just et
-          | et < audEnv.time -> a x
-          | otherwise -> mempty
+          | audEnv.time < et ->  a x
+          | otherwise ->  mempty
     )
     bt
 
@@ -470,9 +473,6 @@ triangle' btm = do
       | otherwise = mempty
   o
 
-triangle :: MusicM AudioListD2
-triangle = boundedEffect getTriangleBegTime getTriangleEndTime triangle'
-
 data SquarePos
   = SquarePosTopLeft
   | SquarePosTopRight
@@ -534,9 +534,6 @@ square' btm = do
             ]
         )
 
-square :: MusicM AudioListD2
-square = boundedEffect getSquareBegTime getSquareEndTime square'
-
 bindBetween :: Number -> Number -> Number -> Number
 bindBetween mn mx n = max mn (min mx n)
 
@@ -556,9 +553,6 @@ motion' st = do
     )
       <$> asks getMotionPoints
   pure2 $ gain_' ("motionGain") (bindBetween 0.2 0.8 (calcSlope minMotionVelocity 0.2 maxMotionVelocity 0.8 velocity)) (playBuf_ ("motionBuffer") "motion" (bindBetween 1.0 1.15 (calcSlope minMotionVelocity 1.0 maxMotionVelocity 1.15 velocity)))
-
-motion :: MusicM AudioListD2
-motion = boundedEffect getMotionBegTime getMotionEndTime motion'
 
 data GearPos
   = GearOne
@@ -628,9 +622,6 @@ gears' btm = do
         ( catMaybes
             [ one, two, three, four ]
         )
-
-gears :: MusicM AudioListD2
-gears = boundedEffect getGearsBegTime getGearsEndTime gears'
 
 data LargeTrack
   = LgSanta
@@ -712,9 +703,6 @@ large' begT = do
   ll <- fromMaybe Nil <$> asks getLargeList
   largeListF begT ll
 
-large :: MusicM AudioListD2
-large = boundedEffect getLargeBegTime getLargeEndTime large'
-
 snowSingleton :: Int -> Number -> MusicM AudioListD2
 snowSingleton i st = boundPlayer st 4.0 (pure2 (gain_' ("snowGain_" <> show i) (fromMaybe 0.3 (A.index [ 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8 ] (i `mod` 7))) (playBuf_ ("snowBuf_" <> show i) "snow" (conv1 (fromMaybe 1.0 $ A.index [ 1.0, 6.0, 8.0, 10.0, 13.0, 18.0, 20.0, 22.0 ] (i `mod` 8))))))
 
@@ -730,9 +718,6 @@ snowAudio l = fold <$> sequence (go 0 l)
 
 snow' :: Number -> MusicM AudioListD2
 snow' begT = (fromMaybe baseSnows <$> asks getSnowList) >>= snowAudio
-
-snow :: MusicM AudioListD2
-snow = boundedEffect getSnowBegTime getSnowEndTime snow'
 
 safeSustainTo8Wide :: NonEmpty List PitchClass -> Vec D8 (Tuple Int PitchClass)
 safeSustainTo8Wide nel = atInL 0 +> atInL 1 +> atInL 2 +> atInL 3 +> atInL 4 +> atInL 5 +> atInL 6 +> atInL 7 +> empty
@@ -831,9 +816,6 @@ bells' begT = do
         ss = safeSustainTo8Wide (safeSustain' placeInPiece twoBeatsAhead)
       bellAudio ss bellsL
 
-bells :: MusicM AudioListD2
-bells = boundedEffect getBellsBegTime getBellsEndTime bells'
-
 data ShrinkPos
   = ShrinkOne
   | ShrinkTwo
@@ -918,9 +900,6 @@ shrink' btm = do
         <$> sequence
             [ one, two, three, four, five, six ]
 
-shrink :: MusicM AudioListD2
-shrink = boundedEffect getShrinkBegTime getShrinkEndTime shrink'
-
 riseMaxVol = 1.0 :: Number
 
 riseF :: Number -> Maybe Number -> Number -> Number -> Number
@@ -946,9 +925,6 @@ rise' btm = do
     riseEvl = (one <<< two <<< three <<< four <<< five <<< six) 1.0
   pure2 (highpass_ "riseHPF" 1900.0 3.0 (gain_' ("riseGain") riseEvl (playBuf_ "riseBuf" "rise" (if time < standardIntro + btm then 1.0 else (1.0 - riseEvl) + (calcSlope (btm + standardIntro) 1.0 (btm + standardIntro + riseNormal) 1.7 time)))))
 
-rise :: MusicM AudioListD2
-rise = boundedEffect getRiseBegTime getRiseEndTime rise'
-
 heart' :: Number -> MusicM AudioListD2
 heart' btm = do
   { musicalInfo } <- ask
@@ -970,14 +946,36 @@ heart' btm = do
                 )
         )
 
-heart :: MusicM AudioListD2
-heart = boundedEffect getHeartBegTime getHeartEndTime heart'
+triangle :: MusicM AudioListD2
+triangle = boundedEffect "triangle" getTriangleBegTime getTriangleEndTime triangle'
 
--- dogs
--- chimes (real)
--- market
--- birds
--- chimes (snyth)
+square :: MusicM AudioListD2
+square = boundedEffect "square" getSquareBegTime getSquareEndTime square'
+
+motion :: MusicM AudioListD2
+motion = boundedEffect "motion" getMotionBegTime getMotionEndTime motion'
+
+snow :: MusicM AudioListD2
+snow = boundedEffect "snow" getSnowBegTime getSnowEndTime snow'
+
+large :: MusicM AudioListD2
+large = boundedEffect "large" getLargeBegTime getLargeEndTime large'
+
+bells :: MusicM AudioListD2
+bells = boundedEffect "bells" getBellsBegTime getBellsEndTime bells'
+
+heart :: MusicM AudioListD2
+heart = boundedEffect "heart" getHeartBegTime getHeartEndTime heart'
+
+shrink :: MusicM AudioListD2
+shrink = boundedEffect "shrink" getShrinkBegTime getShrinkEndTime shrink'
+
+rise :: MusicM AudioListD2
+rise = boundedEffect "rise" getRiseBegTime getRiseEndTime rise'
+
+gears :: MusicM AudioListD2
+gears = boundedEffect "gears" getGearsBegTime getGearsEndTime gears'
+
 silentNight :: MusicM AudioListD2
 silentNight =
   fold
@@ -992,8 +990,8 @@ silentNight =
         , rise
         , large
         , shrink
-        , bells -- from live
-        , heart -- normal heart
+        , bells
+        , heart
         -- , metronome
         ]
 
@@ -1241,7 +1239,7 @@ loopT t = lcmap (_ % t)
 foldOverTime :: forall a b f. Foldable f => Applicative f => Monoid (f b) => (Number -> a -> b) -> (a -> Number) -> f a -> f b
 foldOverTime trans getn = _.acc <<< foldl (\{ acc, clen } a -> { acc: acc <> (pure $ trans clen a), clen: clen + getn a }) { acc: mempty, clen: 0.0 }
 
-boundPlayer :: Number -> Number -> (MusicM AudioListD2) -> MusicM AudioListD2
+boundPlayer :: Number -> Number -> MusicM AudioListD2 -> MusicM AudioListD2
 boundPlayer st len a = do
   { time } <- ask
   if time + kr >= st && time < (st + len) then a else mempty
@@ -3153,6 +3151,8 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
 
     (Tuple vizAcc cvs) = runReader (makeCanvas acc time) { evts, w: ci.w, h: ci.h }
 
+    -- _______________________ = spy "audioMarkers" vizAcc.audioMarkers
+
     players =
       runReader silentNight
         { initiatedCoda: vizAcc.initiatedCoda
@@ -3319,7 +3319,7 @@ main =
           , Tuple "square5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square5.ogg"
           , Tuple "gearBowl" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/SingingBowls/Small---Perform-1.r.ogg"
           , Tuple "large-birds" "https://freesound.org/data/previews/387/387978_6221013-hq.mp3"
-          , Tuple "large-market" "https://freesound.org/data/previews/129/129677_2355772-hq.mp3"
+          , Tuple "large-market" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/129677_2355772-hq.mp3"
           , Tuple "large-chimes" "https://freesound.org/data/previews/136/136299_1645319-hq.mp3"
           , Tuple "large-synth" "https://freesound.org/data/previews/353/353501_5121236-hq.mp3" -- "Ambience, Wind Chimes, A.wav" by InspectorJ (www.jshaw.co.uk) of Freesound.org
           , Tuple "large-santa" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/santa.mp3"
