@@ -781,11 +781,30 @@ i2tip 7 v = V.index v d7
 
 i2tip _ v = V.index v d0
 
-singleBell' :: BellInstrument -> Tuple Int PitchClass -> MusicM AudioListD2
-singleBell' bi (Tuple oct pc) = emptySoundListToBeFilled
+bellName :: BellInstrument -> Int -> PitchClass -> String
+bellName bi oct pc =
+  ( case bi of
+      BellInstrument0 -> "m"
+      BellInstrument1 -> "kg"
+      BellInstrument2 -> "rb"
+      BellInstrument3 -> "sb"
+  )
+    <> show
+        ( ( case oct of
+              0 -> 0
+              1 -> 1
+              2 -> 2
+              3 -> 3
+              _ -> 3
+          )
+            * pc2i pc
+        )
+
+singleBell' :: Number -> BellInstrument -> Tuple Int PitchClass -> MusicM AudioListD2
+singleBell' onset bi (Tuple oct pc) = let bn = bellName bi oct pc in pure2 (playBuf_ (bn <> show onset) bn 1.0)
 
 singleBell :: Vec D8 (Tuple Int PitchClass) -> Int -> List Number -> List (MusicM AudioListD2)
-singleBell v i a = map (\inc -> boundPlayer inc 2.0 (singleBell' (i2bi (i `div` 8)) (i2tip (i `mod` 8) v))) a
+singleBell v i a = map (\inc -> boundPlayer inc 2.0 (singleBell' inc (i2bi (i `div` 8)) (i2tip (i `mod` 8) v))) a
 
 bellAudio :: Vec D8 (Tuple Int PitchClass) -> List (List Number) -> MusicM AudioListD2
 bellAudio v l = fold <$> sequence (join $ go 0 l)
@@ -936,7 +955,20 @@ heart' btm = do
   v <- asks getHeartStartTime
   case v of
     Nothing -> mempty
-    Just t -> boundPlayer t 20.0 emptySoundListToBeFilled
+    Just t ->
+      boundPlayer t (heartNormal + standardOutro)
+        ( fold
+            <$> sequence
+                ( join
+                    ( map
+                        ( \i ->
+                            [ boundPlayer (t + 0.2 + (toNumber i) * 1.45) 2.0 (pure2 $ playBuf_ ("hb1" <> show i) "hb1" 1.0), boundPlayer (t + 0.7 + (toNumber i) * 1.45) 2.0 (pure2 $ playBuf_ ("hb2" <> show i) "hb2" 1.0)
+                            ]
+                        )
+                        (range 0 30)
+                    )
+                )
+        )
 
 heart :: MusicM AudioListD2
 heart = boundedEffect getHeartBegTime getHeartEndTime heart'
@@ -959,8 +991,8 @@ silentNight =
         , gears
         , rise
         , large
+        , shrink
         , bells -- from live
-        , shrink -- wahs Eb Bb C Eb F Bb C
         , heart -- normal heart
         -- , metronome
         ]
@@ -3244,65 +3276,56 @@ main =
     -- All sounds from freesound.org are attributed to their authors.
     , buffers =
       makeBuffersKeepingCache
-        [ Tuple "metronome-wb" "https://freesound.org/data/previews/53/53403_400592-lq.mp3"
-        , Tuple "IntroLoopA" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introC.mp3"
-        , Tuple "IntroLoopB" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introD.mp3"
-        , Tuple "IntroLoopC" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introA.mp3"
-        , Tuple "IntroLoopD" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introB.mp3"
-        , Tuple "IntroLoopE" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introE.mp3"
-        , Tuple "v1t1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t1.mp3"
-        , Tuple "v1t2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t2.mp3"
-        , Tuple "v1t3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t3.mp3"
-        , Tuple "v1t4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t4.mp3"
-        , Tuple "v1t5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t5.mp3"
-        , Tuple "v1t6" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t6.mp3"
-        , Tuple "v1t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t7.mp3"
-        , Tuple "v1t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t8.mp3"
-        , Tuple "v2t1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t1.mp3"
-        , Tuple "v2t2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t2.mp3"
-        , Tuple "v2t3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t3.mp3"
-        , Tuple "v2t4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t4.mp3"
-        , Tuple "v2t5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t5.mp3"
-        , Tuple "v2t6" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t6.mp3"
-        , Tuple "v2t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t7.mp3"
-        , Tuple "v2t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t8.mp3"
-        , Tuple "v3t1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t1.mp3"
-        , Tuple "v3t2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t2.mp3"
-        , Tuple "v3t3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t3.mp3"
-        , Tuple "v3t4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t4.mp3"
-        , Tuple "v3t5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t5.mp3"
-        , Tuple "v3t6" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t6.mp3"
-        , Tuple "v3t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t7.mp3"
-        , Tuple "v3t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t8.mp3"
-        , Tuple "choiceBell" "https://freesound.org/data/previews/411/411089_5121236-hq.mp3"
-        , Tuple "motion" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/motion.ogg"
-        , Tuple "snow" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/snow.mp3"
-        , Tuple "triangle" "https://freesound.org/data/previews/199/199822_3485902-hq.mp3"
-        , Tuple "square1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square1.ogg"
-        , Tuple "square2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square2.ogg"
-        , Tuple "square3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square3.ogg"
-        , Tuple "square4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square4.ogg"
-        , Tuple "square5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square5.ogg"
-        , Tuple "gearBowl" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/SingingBowls/Small---Perform-1.r.ogg"
-        , Tuple "large-birds" "https://freesound.org/data/previews/387/387978_6221013-hq.mp3"
-        , Tuple "large-market" "https://freesound.org/data/previews/129/129677_2355772-hq.mp3"
-        , Tuple "large-chimes" "https://freesound.org/data/previews/136/136299_1645319-hq.mp3"
-        , Tuple "large-synth" "https://freesound.org/data/previews/353/353501_5121236-hq.mp3" -- "Ambience, Wind Chimes, A.wav" by InspectorJ (www.jshaw.co.uk) of Freesound.org
-        , Tuple "large-santa" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/santa.mp3"
-        , Tuple "rise" "https://freesound.org/data/previews/110/110158_649468-hq.mp3"
-        , Tuple "hand-bell-ab" ""
-        , Tuple "hand-bell-a" ""
-        , Tuple "hand-bell-bb" ""
-        , Tuple "hand-bell-cb" ""
-        , Tuple "hand-bell-c" ""
-        , Tuple "hand-bell-db" ""
-        , Tuple "hand-bell-d" ""
-        , Tuple "hand-bell-eb" ""
-        , Tuple "hand-bell-fb" ""
-        , Tuple "hand-bell-f" ""
-        , Tuple "hand-bell-gb" ""
-        , Tuple "hand-bell-g" ""
-        ]
+        $ [ Tuple "metronome-wb" "https://freesound.org/data/previews/53/53403_400592-lq.mp3"
+          , Tuple "hb1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/hb1.ogg"
+          , Tuple "hb2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/hb2.ogg"
+          , Tuple "IntroLoopA" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introC.mp3"
+          , Tuple "IntroLoopB" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introD.mp3"
+          , Tuple "IntroLoopC" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introA.mp3"
+          , Tuple "IntroLoopD" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introB.mp3"
+          , Tuple "IntroLoopE" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/introE.mp3"
+          , Tuple "v1t1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t1.mp3"
+          , Tuple "v1t2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t2.mp3"
+          , Tuple "v1t3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t3.mp3"
+          , Tuple "v1t4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t4.mp3"
+          , Tuple "v1t5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t5.mp3"
+          , Tuple "v1t6" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t6.mp3"
+          , Tuple "v1t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t7.mp3"
+          , Tuple "v1t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t8.mp3"
+          , Tuple "v2t1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t1.mp3"
+          , Tuple "v2t2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t2.mp3"
+          , Tuple "v2t3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t3.mp3"
+          , Tuple "v2t4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t4.mp3"
+          , Tuple "v2t5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t5.mp3"
+          , Tuple "v2t6" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t6.mp3"
+          , Tuple "v2t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t7.mp3"
+          , Tuple "v2t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t8.mp3"
+          , Tuple "v3t1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t1.mp3"
+          , Tuple "v3t2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t2.mp3"
+          , Tuple "v3t3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t3.mp3"
+          , Tuple "v3t4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t4.mp3"
+          , Tuple "v3t5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t5.mp3"
+          , Tuple "v3t6" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t6.mp3"
+          , Tuple "v3t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t7.mp3"
+          , Tuple "v3t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t8.mp3"
+          , Tuple "choiceBell" "https://freesound.org/data/previews/411/411089_5121236-hq.mp3"
+          , Tuple "motion" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/motion.ogg"
+          , Tuple "snow" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/snow.mp3"
+          , Tuple "triangle" "https://freesound.org/data/previews/199/199822_3485902-hq.mp3"
+          , Tuple "square1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square1.ogg"
+          , Tuple "square2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square2.ogg"
+          , Tuple "square3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square3.ogg"
+          , Tuple "square4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square4.ogg"
+          , Tuple "square5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square5.ogg"
+          , Tuple "gearBowl" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/SingingBowls/Small---Perform-1.r.ogg"
+          , Tuple "large-birds" "https://freesound.org/data/previews/387/387978_6221013-hq.mp3"
+          , Tuple "large-market" "https://freesound.org/data/previews/129/129677_2355772-hq.mp3"
+          , Tuple "large-chimes" "https://freesound.org/data/previews/136/136299_1645319-hq.mp3"
+          , Tuple "large-synth" "https://freesound.org/data/previews/353/353501_5121236-hq.mp3" -- "Ambience, Wind Chimes, A.wav" by InspectorJ (www.jshaw.co.uk) of Freesound.org
+          , Tuple "large-santa" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/santa.mp3"
+          , Tuple "rise" "https://freesound.org/data/previews/110/110158_649468-hq.mp3"
+          ]
+        <> join (map (\x -> map (\i -> Tuple (x <> show i) ("https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/Bells/" <> x <> show i <> ".ogg")) (A.range 0 47)) [ "m", "kg", "sb", "rb" ])
     }
 
 newtype Interactions
