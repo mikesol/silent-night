@@ -41,7 +41,7 @@ import Effect.Now (now)
 import Effect.Random (random)
 import Effect.Ref as Ref
 import FRP.Behavior (Behavior, behavior)
-import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, AudioUnit, BrowserAudioBuffer, CanvasInfo(..), decodeAudioDataFromUri, defaultExporter, defaultParam, evalPiecewise, gainT_, gainT_', gain_, gain_', pannerMono_, playBufT_, playBuf_, runInBrowser_, sinOsc_, speaker')
+import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, AudioUnit, BrowserAudioBuffer, CanvasInfo(..), decodeAudioDataFromUri, defaultExporter, defaultParam, evalPiecewise, gainT_, gainT_', gain_, gain_', highpass_, loopBuf_, makePeriodicWave, notch_, pannerMono_, periodicOsc_, playBufT_, playBuf_, runInBrowser_, sinOsc_, speaker')
 import FRP.Event (Event, makeEvent, subscribe)
 import Foreign.Object as O
 import Graphics.Canvas (Rectangle)
@@ -540,6 +540,9 @@ square = boundedEffect getSquareBegTime getSquareEndTime square'
 bindBetween :: Number -> Number -> Number -> Number
 bindBetween mn mx n = max mn (min mx n)
 
+bb01 :: Number -> Number
+bb01 = bindBetween 0.0 1.0
+
 maxMotionVelocity = 1.0 / 0.2 :: Number
 
 minMotionVelocity = 0.0 :: Number
@@ -563,8 +566,43 @@ data GearPos
   | GearThree
   | GearFour
 
+gp2s :: GearPos -> String
+gp2s GearOne = "gear1"
+
+gp2s GearTwo = "gear2"
+
+gp2s GearThree = "gear3"
+
+gp2s GearFour = "gear4"
+
+gp2r :: GearPos -> Number
+gp2r GearOne = 0.9
+
+gp2r GearTwo = 1.0
+
+gp2r GearThree = 1.3
+
+gp2r GearFour = 1.6
+
+gp2pr :: GearPos -> Number
+gp2pr GearOne = 0.2
+
+gp2pr GearTwo = 0.3
+
+gp2pr GearThree = 0.4
+
+gp2pr GearFour = 0.5
+
+gearMaxVol = 0.7 :: Number
+
 gearSound :: Maybe Number -> GearPos -> Number -> MusicM AudioListD2
-gearSound fadeOutT pos startT = emptySoundListToBeFilled
+gearSound fadeOutT pos startT =
+  let
+    gn = gp2s pos
+  in
+    do
+      { time } <- ask
+      pure2 (pannerMono_ ("gainPM" <> gn) (sin $ (time - startT) * pi * gp2pr pos) (gain_' ("gain" <> gn) (maybe gearMaxVol (\fot -> bindBetween 0.0 gearMaxVol (calcSlope fot gearMaxVol (fot + 4.0) 0.0 time)) fadeOutT) (loopBuf_ ("buffer_" <> gn) "gearBowl" (gp2r pos) 4.0 10.0)))
 
 gearsP :: Maybe Number -> GearPos -> Number -> MusicM AudioListD2
 gearsP fadeOutT pos startT = boundPlayer startT 10000.0 (gearSound fadeOutT pos startT)
@@ -595,67 +633,84 @@ gears :: MusicM AudioListD2
 gears = boundedEffect getGearsBegTime getGearsEndTime gears'
 
 data LargeTrack
-  = Large0
-  | Large1
-  | Large2
-  | Large3
-  | Large4
+  = LgSanta
+  | LgBirds
+  | LgChimes
+  | LgSynth
+  | LgCrowd
 
-largeSingleton :: Number -> LargeTrack -> Maybe Number -> MusicM AudioListD2
-largeSingleton st ltrack ed = emptySoundListToBeFilled
+lt2s :: LargeTrack -> String
+lt2s LgBirds = "large-birds"
 
-fiveLarges :: Int -> Number -> Number -> Number -> Number -> Number -> MusicM AudioListD2
-fiveLarges nfilt d c b a st =
-  fold
-    <$> sequence [ largeSingleton d Large4 Nothing, largeSingleton c Large3 (Just d), largeSingleton b Large2 (Just c), largeSingleton a Large1 (Just b), largeSingleton st Large0 (Just a) ]
+lt2s LgCrowd = "large-market"
 
--- piece start, large start
-largeListF :: Number -> Number -> List Number -> MusicM AudioListD2
-largeListF pst st Nil = largeSingleton st Large0 Nothing
+lt2s LgChimes = "large-chimes"
 
-largeListF pst st (a : Nil) =
-  fold
-    <$> sequence
-        [ largeSingleton a Large1 Nothing, largeSingleton st Large0 (Just a) ]
+lt2s LgSynth = "large-synth"
 
-largeListF pst st (b : a : Nil) =
-  fold
-    <$> sequence
-        [ largeSingleton b Large2 Nothing, largeSingleton a Large1 (Just b), largeSingleton st Large0 (Just a) ]
+lt2s LgSanta = "large-santa"
 
-largeListF pst st (c : b : a : Nil) =
-  fold
-    <$> sequence
-        [ largeSingleton c Large3 Nothing, largeSingleton b Large2 (Just c), largeSingleton a Large1 (Just b), largeSingleton st Large0 (Just a) ]
+lg2f :: Int -> LargeTrack -> AudioUnit D2 -> AudioUnit D2
+lg2f i LgCrowd
+  | i == 0 = identity
+  | i == 1 = (notch_ "lg-notch-1" 300.0 1.0)
+  | i == 2 = (notch_ "lg-notch-2" 900.0 1.0) <<< lg2f 1 LgCrowd
+  | i == 3 = (notch_ "lg-notch-3" 1400.0 1.0) <<< lg2f 2 LgCrowd
+  | i == 4 = (notch_ "lg-notch-4" 2000.0 1.0) <<< lg2f 3 LgCrowd
+  | otherwise = (notch_ "lg-notch-5" 2500.0 1.0) <<< lg2f 4 LgCrowd
 
-largeListF pst st (d : c : b : a : Nil) = fiveLarges 0 d c b a st
+lg2f _ _ = identity
 
-largeListF pst st (e : d : c : b : a : Nil) = fiveLarges 1 d c b a st
+largeSingleton :: Int -> Number -> LargeTrack -> Maybe Number -> MusicM AudioListD2
+largeSingleton nfilt st ltrack ed =
+  let
+    ln = lt2s ltrack
 
-largeListF pst st (f : e : d : c : b : a : Nil) = fiveLarges 2 d c b a st
+    ft = lg2f nfilt ltrack
 
-largeListF pst st (g : f : e : d : c : b : a : Nil) = fiveLarges 3 d c b a st
+    ept = st + largeCrossing
+  in
+    do
+      { time } <- ask
+      pure2 (ft (gain_' ("gain_large_" <> ln) (1.0 * (bb01 $ calcSlope (ept - 5.0) 1.0 ept 0.0 time) * (bb01 $ calcSlope st 0.0 (st + 4.0) 1.0 time) * (maybe 1.0 (\ee -> bb01 $ calcSlope ee 1.0 (ee + 4.0) 0.0 time) ed)) (loopBuf_ ("loop_large_" <> ln) ln 1.0 0.0 0.0)))
 
-largeListF pst st (h : g : f : e : d : c : b : a : Nil) = fiveLarges 4 d c b a st
+makeLarges :: Int -> Number -> Maybe Number -> Maybe Number -> Maybe Number -> Maybe Number -> MusicM AudioListD2
+makeLarges nfilt st birdsOut santaOut chimesOut synthOut =
+  let
+    lfunc = largeSingleton nfilt st
+  in
+    fold
+      <$> sequence [ lfunc LgSanta santaOut, lfunc LgBirds birdsOut, lfunc LgChimes chimesOut, lfunc LgSynth synthOut, lfunc LgCrowd Nothing ]
 
-largeListF pst st (i : h : g : f : e : d : c : b : a : Nil) = fiveLarges 5 d c b a st
+--  large start
+largeListF :: Number -> List Number -> MusicM AudioListD2
+largeListF st Nil = makeLarges 0 st Nothing Nothing Nothing Nothing
 
-largeListF pst st (j : i : h : g : f : e : d : c : b : a : Nil) = fiveLarges 6 d c b a st
+largeListF st (a : Nil) = makeLarges 0 st (Just a) Nothing Nothing Nothing
 
-largeListF pst st (k : j : i : h : g : f : e : d : c : b : a : Nil) = fiveLarges 7 d c b a st
+largeListF st (b : a : Nil) = makeLarges 0 st (Just a) (Just b) Nothing Nothing
+
+largeListF st (c : b : a : Nil) = makeLarges 0 st (Just a) (Just b) (Just c) Nothing
+
+largeListF st (d : c : b : a : Nil) = makeLarges 0 st (Just a) (Just b) (Just c) (Just d)
+
+largeListF st (e : d : c : b : a : Nil) = makeLarges 1 st (Just a) (Just b) (Just c) (Just d)
+
+largeListF st (f : e : d : c : b : a : Nil) = makeLarges 2 st (Just a) (Just b) (Just c) (Just d)
+
+largeListF st (g : f : e : d : c : b : a : Nil) = makeLarges 3 st (Just a) (Just b) (Just c) (Just d)
+
+largeListF st (h : g : f : e : d : c : b : a : Nil) = makeLarges 4 st (Just a) (Just b) (Just c) (Just d)
 
 -- ignore anything larger than 7 filters
 -- even this is probably too big...
-largeListF pst st (foo : bar) = largeListF pst st bar
+largeListF st (foo : bar) = largeListF st bar
 
 large' :: Number -> MusicM AudioListD2
 large' begT = do
-  { musicalInfo, mainStarts } <- ask
-  case mainStarts of
-    Nothing -> mempty
-    Just mst -> do
-      ll <- fromMaybe Nil <$> asks getLargeList
-      largeListF mst begT ll
+  { musicalInfo } <- ask
+  ll <- fromMaybe Nil <$> asks getLargeList
+  largeListF begT ll
 
 large :: MusicM AudioListD2
 large = boundedEffect getLargeBegTime getLargeEndTime large'
@@ -768,8 +823,58 @@ data ShrinkPos
   | ShrinkFive
   | ShrinkSix
 
+derive instance genericShrinkPos :: Generic ShrinkPos _
+
+instance showShrinkPos :: Show ShrinkPos where
+  show s = genericShow s
+
+shrinkL = standardIntro + shrinkNormal + standardOutro :: Number
+
 shrinkP :: ShrinkPos -> Number -> Number -> MusicM AudioListD2
-shrinkP rp startT currentShrinkPlace = emptySoundListToBeFilled
+shrinkP rp startT currentShrinkPlace = do
+  { time } <- ask
+  pure2
+    $ wah (show rp) "smooth" shrinkL
+        ( case rp of
+            ShrinkOne -> 100
+            ShrinkTwo -> 110
+            ShrinkThree -> 120
+            ShrinkFour -> 130
+            ShrinkFive -> 140
+            ShrinkSix -> 150
+        )
+        ( pure
+            $ case rp of
+                ShrinkOne -> 75.0 -- Eb Bb C Eb F Bb C
+                ShrinkTwo -> 82.0
+                ShrinkThree -> 84.0
+                ShrinkFour -> 87.0
+                ShrinkFive -> 89.0
+                ShrinkSix -> 91.0
+        )
+        (\t -> 0.2 * bb01 (calcSlope startT 0.0 (startT + standardIntro) 1.0 t) * bb01 (calcSlope (startT + standardIntro + shrinkNormal) 1.0 (startT + standardIntro + shrinkNormal + standardOutro) 0.0 t) * currentShrinkPlace)
+        ( \t ->
+            sin
+              $ ( t
+                    + case rp of
+                        ShrinkOne -> 0.2
+                        ShrinkTwo -> 0.4
+                        ShrinkThree -> 0.5
+                        ShrinkFour -> 0.6
+                        ShrinkFive -> 0.8
+                        ShrinkSix -> 0.9
+                )
+              * pi
+              * ( case rp of
+                    ShrinkOne -> 0.2
+                    ShrinkTwo -> 0.1
+                    ShrinkThree -> 0.3
+                    ShrinkFour -> 0.4
+                    ShrinkFive -> 0.5
+                    ShrinkSix -> 0.6
+                )
+        )
+        time
 
 shrink' :: Number -> MusicM AudioListD2
 shrink' btm = do
@@ -797,36 +902,30 @@ shrink' btm = do
 shrink :: MusicM AudioListD2
 shrink = boundedEffect getShrinkBegTime getShrinkEndTime shrink'
 
-data RisePos
-  = RiseOne
-  | RiseTwo
-  | RiseThree
-  | RiseFour
-  | RiseFive
-  | RiseSix
+riseMaxVol = 1.0 :: Number
 
-riseP :: RisePos -> Number -> Maybe Number -> MusicM AudioListD2
-riseP rp startT didStop = emptySoundListToBeFilled
+riseF :: Number -> Maybe Number -> Number -> Number -> Number
+riseF startT didStop time gn = gn * (maybe riseMaxVol (\n -> calcSlope n (riseMaxVol) (n + 2.0) 0.5 time) didStop)
 
 rise' :: Number -> MusicM AudioListD2
 rise' btm = do
-  { musicalInfo } <- ask
+  { musicalInfo, time } <- ask
   v <- asks getRiseVector
   let
-    one = riseP RiseOne btm (join $ flip V.index d0 <$> v)
+    one = riseF btm (join $ flip V.index d0 <$> v) time
 
-    two = riseP RiseTwo btm (join $ flip V.index d1 <$> v)
+    two = riseF btm (join $ flip V.index d1 <$> v) time
 
-    three = riseP RiseThree btm (join $ flip V.index d2 <$> v)
+    three = riseF btm (join $ flip V.index d2 <$> v) time
 
-    four = riseP RiseFour btm (join $ flip V.index d3 <$> v)
+    four = riseF btm (join $ flip V.index d3 <$> v) time
 
-    five = riseP RiseFive btm (join $ flip V.index d4 <$> v)
+    five = riseF btm (join $ flip V.index d4 <$> v) time
 
-    six = riseP RiseSix btm (join $ flip V.index d5 <$> v)
-  fold
-    <$> sequence
-        [ one, two, three, four, five, six ]
+    six = riseF btm (join $ flip V.index d5 <$> v) time
+
+    riseEvl = (one <<< two <<< three <<< four <<< five <<< six) 1.0
+  pure2 (highpass_ "riseHPF" 1900.0 3.0 (gain_' ("riseGain") riseEvl (playBuf_ "riseBuf" "rise" (if time < standardIntro + btm then 1.0 else (1.0 - riseEvl) + (calcSlope (btm + standardIntro) 1.0 (btm + standardIntro + riseNormal) 1.7 time)))))
 
 rise :: MusicM AudioListD2
 rise = boundedEffect getRiseBegTime getRiseEndTime rise'
@@ -842,6 +941,11 @@ heart' btm = do
 heart :: MusicM AudioListD2
 heart = boundedEffect getHeartBegTime getHeartEndTime heart'
 
+-- dogs
+-- chimes (real)
+-- market
+-- birds
+-- chimes (snyth)
 silentNight :: MusicM AudioListD2
 silentNight =
   fold
@@ -851,13 +955,13 @@ silentNight =
         , triangle
         , square
         , motion
-        , gears
-        , large
         , snow
-        , bells
+        , gears
         , rise
-        , shrink
-        , heart
+        , large
+        , bells -- from live
+        , shrink -- wahs Eb Bb C Eb F Bb C
+        , heart -- normal heart
         -- , metronome
         ]
 
@@ -1124,6 +1228,9 @@ toNel :: forall s. Semiring s => List s -> NonEmpty List s
 toNel Nil = zero :| Nil
 
 toNel (h : t) = h :| t
+
+wah :: String -> String -> Number -> Int -> List Number -> (Number -> Number) -> (Number -> Number) -> Number -> AudioUnit D2
+wah tag pwave len nwahs pitches gnF panF time = pannerMono_ (tag <> "WahPanner") (panF time) (gain_ (tag <> "WahGain") (if time >= len then 0.0 else (gnF time * (triangle01 (len / (toNumber nwahs)) time) / (toNumber $ L.length pitches))) (toNel (L.mapWithIndex (\i p -> periodicOsc_ (tag <> show i) pwave (conv440 p)) pitches)))
 
 ----
 kr = (toNumber defaultEngineInfo.msBetweenSamples) / 1000.0 :: Number
@@ -3123,6 +3230,18 @@ main =
           , audioMarkers: defaultAudioMarkers
           }
     , exporter = defaultExporter
+    , periodicWaves =
+      \ctx _ res rej -> do
+        smooth <-
+          makePeriodicWave ctx
+            (0.5 +> 0.25 +> -0.1 +> 0.07 +> 0.1 +> empty)
+            (0.2 +> 0.1 +> 0.01 +> -0.03 +> -0.1 +> empty)
+        rich <-
+          makePeriodicWave ctx
+            (0.1 +> 0.3 +> -0.1 +> 0.1 +> 0.2 +> 0.05 +> 0.1 +> 0.01 +> empty)
+            (0.3 +> -0.5 +> -0.4 +> -0.03 +> -0.15 +> -0.2 +> -0.05 +> -0.02 +> empty)
+        res $ O.fromFoldable [ Tuple "smooth" smooth, Tuple "rich" rich ]
+    -- All sounds from freesound.org are attributed to their authors.
     , buffers =
       makeBuffersKeepingCache
         [ Tuple "metronome-wb" "https://freesound.org/data/previews/53/53403_400592-lq.mp3"
@@ -3155,7 +3274,7 @@ main =
         , Tuple "v3t6" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t6.mp3"
         , Tuple "v3t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t7.mp3"
         , Tuple "v3t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t8.mp3"
-        , Tuple "choiceBell" "https://freesound.org/data/previews/411/411089_5121236-lq.mp3"
+        , Tuple "choiceBell" "https://freesound.org/data/previews/411/411089_5121236-hq.mp3"
         , Tuple "motion" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/motion.ogg"
         , Tuple "snow" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/snow.mp3"
         , Tuple "triangle" "https://freesound.org/data/previews/199/199822_3485902-hq.mp3"
@@ -3164,6 +3283,25 @@ main =
         , Tuple "square3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square3.ogg"
         , Tuple "square4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square4.ogg"
         , Tuple "square5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/square5.ogg"
+        , Tuple "gearBowl" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/SingingBowls/Small---Perform-1.r.ogg"
+        , Tuple "large-birds" "https://freesound.org/data/previews/387/387978_6221013-hq.mp3"
+        , Tuple "large-market" "https://freesound.org/data/previews/129/129677_2355772-hq.mp3"
+        , Tuple "large-chimes" "https://freesound.org/data/previews/136/136299_1645319-hq.mp3"
+        , Tuple "large-synth" "https://freesound.org/data/previews/353/353501_5121236-hq.mp3" -- "Ambience, Wind Chimes, A.wav" by InspectorJ (www.jshaw.co.uk) of Freesound.org
+        , Tuple "large-santa" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/santa.mp3"
+        , Tuple "rise" "https://freesound.org/data/previews/110/110158_649468-hq.mp3"
+        , Tuple "hand-bell-ab" ""
+        , Tuple "hand-bell-a" ""
+        , Tuple "hand-bell-bb" ""
+        , Tuple "hand-bell-cb" ""
+        , Tuple "hand-bell-c" ""
+        , Tuple "hand-bell-db" ""
+        , Tuple "hand-bell-d" ""
+        , Tuple "hand-bell-eb" ""
+        , Tuple "hand-bell-fb" ""
+        , Tuple "hand-bell-f" ""
+        , Tuple "hand-bell-gb" ""
+        , Tuple "hand-bell-g" ""
         ]
     }
 
