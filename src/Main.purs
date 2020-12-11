@@ -416,8 +416,8 @@ derive instance genericTrianglePos :: Generic TrianglePos _
 instance showTrianglePos :: Show TrianglePos where
   show s = genericShow s
 
-triangleSound :: Number -> TrianglePos -> Maybe Number -> Int -> Number -> MusicM (AudioUnit D2)
-triangleSound gn tp dimT cm gp = do
+triangleSound :: Number -> TrianglePos -> Maybe Number -> Number -> MusicM AudioListD2
+triangleSound gn tp dimT stT = do
   { time } <- ask
   let
     nm = case tp of
@@ -425,14 +425,20 @@ triangleSound gn tp dimT cm gp = do
       TriangleLeft -> "sb38"
       TriangleRight -> "sb33"
 
-    bo = beatGapToStartOffsetAsParam 1.0 gp
-  pure
-    $ gain_' ("gain" <> nm <> show cm)
-        ( case dimT of
-            Nothing -> gn
-            Just x -> bb01 (calcSlope x 1.0 (x + 0.2) 0.0 time)
-        )
-        (playBufT_ ("buffer" <> nm <> show cm) nm bo)
+    bo =
+      defaultParam
+        { param = 1.0
+        , timeOffset = max 0.0 $ stT - time
+        }
+  boundPlayer stT 3.0
+    ( pure2
+        $ gain_' ("gain" <> nm <> show stT)
+            ( case dimT of
+                Nothing -> gn
+                Just x -> bb01 (calcSlope x 1.0 (x + 0.2) 0.0 time)
+            )
+            (playBufT_ ("buffer" <> nm <> show stT) nm bo)
+    )
 
 triangle' :: Number -> MusicM AudioListD2
 triangle' btm = do
@@ -464,33 +470,7 @@ triangle' btm = do
     curriedSecond = curriedTop
 
     curriedThird = curriedRight
-  let
-    o
-      | musicalInfo.measure == ffm.measure && musicalInfo.beat < 0.5 = sequence $ curriedFirst mim 0.0 : Nil
-      | Just gap <- startM1 |< mmm1 =
-        sequence
-          $ curriedFirst mim gap
-          : curriedThird (mim - 1) 0.0
-          : Nil
-      | mmm1 ||< startM0_1 =
-        sequence
-          $ curriedFirst mim 0.0
-          : curriedThird (mim - 1) 0.0
-          : Nil
-      | Just gap <- startM0_1 |< mmm1
-      , mmm1 ||< startM0_2 =
-        sequence
-          $ curriedSecond mim gap
-          : curriedFirst mim 0.0
-          : Nil
-      | Just gap <- startM0_2 |< mmm1
-      , mmm1 ||< startM1 =
-        sequence
-          $ curriedThird mim gap
-          : curriedSecond mim 0.0
-          : Nil
-      | otherwise = mempty
-  o
+  fold <$> sequence (join $ map (\i -> map (\(Tuple f n) -> f $ musicalInfoToTime { measure: ffm.measure + i, beat: n }) [ Tuple curriedFirst 0.0, Tuple curriedSecond 1.0, Tuple curriedThird 2.0 ]) (A.range 0 30))
 
 data SquarePos
   = SquarePosTopLeft
@@ -584,7 +564,7 @@ minMotionVelocity = 0.0 :: Number
 motion' :: Number -> MusicM AudioListD2
 motion' st = do
   velocity <- fromMaybe 0.0 <$> asks getMotionVelocityWithLag
-  pure2 $ gain_' ("motionGain") ((bindAndSlope minMotionVelocity 0.0 maxMotionVelocity 1.0 velocity) * windGainMultiplier) (playBuf_ ("motionBuffer") "motion" (bindAndSlope minMotionVelocity 1.0 maxMotionVelocity 1.15 velocity))
+  pure2 $ gain_' ("motionGain") ((bindAndSlope minMotionVelocity 0.0 maxMotionVelocity 1.0 velocity) * windGainMultiplier) (playBuf_ ("motionBuffer") "square1" (bindAndSlope minMotionVelocity 1.0 maxMotionVelocity 1.15 velocity))
 
 data GearPos
   = GearOne
@@ -798,14 +778,17 @@ i2tip 7 v = V.index v d7
 
 i2tip _ v = V.index v d0
 
-bellName :: BellInstrument -> Int -> PitchClass -> String
-bellName bi oct pc =
+bi2s bi =
   ( case bi of
       BellInstrument0 -> "m"
       BellInstrument1 -> "kg"
       BellInstrument2 -> "rb"
       BellInstrument3 -> "sb"
   )
+
+bellName :: BellInstrument -> Int -> PitchClass -> String
+bellName bi oct pc =
+  bi2s bi
     <> show
         ( ( case oct of
               0 -> 0
@@ -818,7 +801,11 @@ bellName bi oct pc =
         )
 
 singleBell' :: Number -> BellInstrument -> Tuple Int PitchClass -> MusicM AudioListD2
-singleBell' onset bi (Tuple oct pc) = let bn = bellName bi oct pc in pure2 (playBuf_ (bn <> show onset) bn 1.0)
+singleBell' onset bi (Tuple oct pc) =
+  let
+    bn = bellName bi oct pc
+  in
+    pure2 (playBuf_ (bn <> show onset) bn 1.0)
 
 singleBell :: Vec D8 (Tuple Int PitchClass) -> Int -> List Number -> List (MusicM AudioListD2)
 singleBell v i a = map (\inc -> boundPlayer inc 2.0 (singleBell' inc (i2bi (i `div` 8)) (i2tip (i `mod` 8) v))) a
@@ -888,7 +875,8 @@ shrinkP rp startT currentShrinkPlace = do
         ( \t ->
             let
               o
-                | t < startT + standardIntro = bb01 (calcSlope startT 0.0 (startT + standardIntro) 1.0 t)
+                -- elongate a bit
+                | t < startT + standardIntro + 5.0 = bb01 (calcSlope startT 0.0 (startT + standardIntro + 5.0) 1.0 t)
                 | t >= startT + standardIntro + shrinkNormal = bb01 (calcSlope (startT + standardIntro + shrinkNormal) 1.0 (startT + standardIntro + shrinkNormal + standardOutro) 0.0 t)
                 | otherwise = 1.0
             in
@@ -940,10 +928,8 @@ shrink' btm = do
         <$> sequence
             [ one, two, three, four, five, six ]
 
-riseMaxVol = 1.0 :: Number
-
 riseF :: Number -> Maybe Number -> Number -> Number -> Number
-riseF startT didStop time gn = gn * (maybe riseMaxVol (\n -> bindAndSlope n (riseMaxVol) (n + 2.0) 0.5 time) didStop)
+riseF startT didStop time freq = (maybe 0.0 (\n -> bindAndSlope n (0.0) (n + 2.0) 1000.0 time) didStop) + freq
 
 rise' :: Number -> MusicM AudioListD2
 rise' btm = do
@@ -962,10 +948,13 @@ rise' btm = do
 
     six = riseF btm (join $ flip V.index d5 <$> v) time
 
-    riseEvl = (one <<< two <<< three <<< four <<< five <<< six) 1.0
+    riseEvl = (one <<< two <<< three <<< four <<< five <<< six) 500.0
 
-    gnNow = (bindAndSlope btm 0.0 (btm + standardIntro) 1.0 <<< (bb01 <<< (calcSlope (btm + standardIntro + riseNormal) 1.0 (btm + standardIntro + riseNormal + standardOutro) 0.0))) time
-  pure2 (highpass_ "riseHPF" 1900.0 3.0 (gain_' ("riseGain") (riseEvl * gnNow) (playBuf_ "riseBuf" "rise" (if time < standardIntro + btm then 1.0 else (1.0 - riseEvl) + (calcSlope (btm + standardIntro) 1.0 (btm + standardIntro + riseNormal) 1.3 time)))))
+    gnNow
+      | time < btm + standardIntro = bindAndSlope btm 0.0 (btm + standardIntro) 1.0 time
+      | time >= btm + standardIntro + riseNormal = bb01 $ calcSlope (btm + standardIntro + riseNormal) 1.0 (btm + standardIntro + riseNormal + standardOutro) 0.0 time
+      | otherwise = 1.0
+  pure2 (highpass_ "riseHPF" riseEvl 3.0 (gain_' ("riseGain") (gnNow) (playBuf_ "riseBuf" "rise" 1.0)))
 
 hplr i bf = pure2 $ gain_' (bf <> "gain" <> show i) 0.3 (lowpass_ (bf <> "lowpass" <> show i) 150.0 2.0 (playBuf_ (bf <> "buf" <> show i) bf 1.0))
 
@@ -1364,7 +1353,7 @@ data PlayerEvent
   = Triangle (Vec D3 (Maybe Number))
   | Square (Vec D4 (Maybe Number))
   | Motion (Maybe Point) (Either Point (Tuple Point Point)) -- resting point or offset from mouse
-  | Rise (Vec D6 (Maybe Number)) -- pos, stopped
+  | Rise (Vec D6 (Maybe (Tuple Number Number))) -- pos, stopped
   | Large (List (Tuple Point Number)) -- pos, startT
   | Bells (List (List Number))
   | Gears (Vec D4 (Maybe Number))
@@ -1555,9 +1544,9 @@ type BegTimeGetter
 type EndTimeGetter
   = AccumulatorGetter (Number)
 
-_Just_2_1 = _Just <<< _2 :: forall p inter. Choice p ⇒ Strong p ⇒ p (Maybe (Tuple inter (Maybe Number))) (Maybe (Tuple inter (Maybe Number))) -> p (Marker inter) (Marker inter)
+_Just_2_1 = _Just <<< _2 :: forall p inter. Choice p => Strong p => p (Maybe (Tuple inter (Maybe Number))) (Maybe (Tuple inter (Maybe Number))) -> p (Marker inter) (Marker inter)
 
-_Just_2_2 = _Just <<< _2 <<< _Just <<< _2 :: forall p inter. Choice p ⇒ Strong p ⇒ p (Maybe Number) (Maybe Number) -> p (Marker inter) (Marker inter)
+_Just_2_2 = _Just <<< _2 <<< _Just <<< _2 :: forall p inter. Choice p => Strong p => p (Maybe Number) (Maybe Number) -> p (Marker inter) (Marker inter)
 
 maybeTupleMod :: forall i x. i -> Maybe (Tuple i (Maybe x)) -> Maybe (Tuple i (Maybe x))
 maybeTupleMod i Nothing = Just $ Tuple i Nothing
@@ -2990,31 +2979,31 @@ makeCanvas acc time = do
                       )
               | isNothing one
                   && dAcc
-                      (sqToRect (1.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> (Just heightNow) +> two +> three +> four +> five +> six +> empty) time
+                      (sqToRect (1.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> (Just $ Tuple heightNow time) +> two +> three +> four +> five +> six +> empty) time
               | isNothing two
                   && dAcc
-                      (sqToRect (3.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> (Just heightNow) +> three +> four +> five +> six +> empty) time
+                      (sqToRect (3.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> (Just $ Tuple heightNow time) +> three +> four +> five +> six +> empty) time
               | isNothing three
                   && dAcc
-                      (sqToRect (5.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> (Just heightNow) +> four +> five +> six +> empty) time
+                      (sqToRect (5.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> (Just $ Tuple heightNow time) +> four +> five +> six +> empty) time
               | isNothing four
                   && dAcc
-                      (sqToRect (7.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> (Just heightNow) +> five +> six +> empty) time
+                      (sqToRect (7.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> (Just $ Tuple heightNow time) +> five +> six +> empty) time
               | isNothing five
                   && dAcc
-                      (sqToRect (9.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> four +> (Just heightNow) +> six +> empty) time
+                      (sqToRect (9.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> four +> (Just $ Tuple heightNow time) +> six +> empty) time
               | isNothing six
                   && dAcc
-                      (sqToRect (11.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> four +> five +> (Just heightNow) +> empty) time
+                      (sqToRect (11.0 * w / 12.0) (heightNow) cw) = nextRise acc i (\t -> one +> two +> three +> four +> five +> (Just $ Tuple heightNow time) +> empty) time
               | otherwise =
                 pure
-                  $ Tuple (setRiseVector v acc)
+                  $ Tuple (setRiseVector (map (map snd) v) acc)
                       ( fold
                           ( map
-                              ( \(Tuple xp pegged) ->
+                              ( \(Tuple xp pgd) ->
                                   ( filled
                                       (fillColor (whiteRGBA (if time > tillNormal then calcSlope tillNormal 1.0 (tillNormal + standardOutro) 0.0 time else 1.0)))
-                                      (circle (w * xp) (fromMaybe heightNow pegged) cw)
+                                      (circle (w * xp) (maybe heightNow fst pgd) cw)
                                   )
                               )
                               (zip riseXP [ one, two, three, four, five, six ])
@@ -3226,7 +3215,7 @@ baseSnows = L.fromFoldable $ A.replicate snowL Nothing :: List (Maybe Number)
 
 baseBells = L.fromFoldable $ A.replicate 24 Nil :: List (List Number)
 
-allPlayerEvent' =
+allPlayerEvent =
   [ Snow baseSnows
   , Motion Nothing (Left { x: 0.18, y: 0.18 })
   , Triangle (fill (const Nothing))
@@ -3239,9 +3228,9 @@ allPlayerEvent' =
   ] ::
     Array PlayerEvent
 
-allPlayerEvent =
-  [ Rise (fill (const Nothing))
-  , Bells baseBells
+allPlayerEvent' =
+  [ Rise (fill (const Nothing)) -- not working, change 
+  , Bells baseBells -- need to introspect
   , Shrink shrinkStart
   , Triangle (fill (const Nothing))
   , Gears (fill (const Nothing))
@@ -3557,3 +3546,6 @@ snows = [ SnowI 0.1763482237244488 0.7843392558067448 0.8736775739009528, SnowI 
 snowL = A.length snows :: Int
 
 snowList = L.fromFoldable snows :: List SnowI
+
+-- make motion chimes
+-- redo triangle, simply does not work
