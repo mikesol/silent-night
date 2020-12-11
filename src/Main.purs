@@ -33,6 +33,7 @@ import Data.Tuple (Tuple(..), fst, snd, uncurry)
 import Data.Typelevel.Num (D2, D3, D4, D6, D8, d0, d1, d2, d3, d4, d5, d6, d7)
 import Data.Vec (Vec, empty, fill, (+>))
 import Data.Vec as V
+import Debug.Trace (spy)
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), delay, try)
 import Effect.Exception (Error)
@@ -40,7 +41,7 @@ import Effect.Now (now)
 import Effect.Random (random)
 import Effect.Ref as Ref
 import FRP.Behavior (Behavior, behavior)
-import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, AudioUnit, BrowserAudioBuffer, CanvasInfo(..), decodeAudioDataFromUri, defaultExporter, defaultParam, evalPiecewise, gainT_, gainT_', gain_, gain_', highpass_, loopBuf_, lowpass_, makePeriodicWave, notch_, pannerMono_, periodicOsc_, playBufT_, playBuf_, runInBrowser_, sinOsc_, speaker')
+import FRP.Behavior.Audio (AV(..), AudioContext, AudioParameter, AudioUnit, BrowserAudioBuffer, CanvasInfo(..), EngineInfo, decodeAudioDataFromUri, defaultExporter, defaultParam, evalPiecewise, gainT_, gainT_', gain_, gain_', highpass_, loopBuf_, lowpass_, makePeriodicWave, notch_, pannerMono_, periodicOsc_, playBufT_, playBuf_, runInBrowser_, sinOsc_, speaker')
 import FRP.Event (Event, makeEvent, subscribe)
 import Foreign.Object as O
 import Graphics.Canvas (Rectangle)
@@ -69,6 +70,13 @@ import Web.UIEvent.MouseEvent as ME
 -- Snow :: Bells
 -- Motion :: Wind
 -- Heart :: Beating
+silentNightEngineInfo =
+  defaultEngineInfo
+    { msBetweenSamples = 40
+    , msBetweenPings = 35
+    } ::
+    EngineInfo
+
 tempo = 72.0 :: Number
 
 measureDur = 180.0 / tempo :: Number
@@ -85,11 +93,11 @@ introInMeasures = 4.0 :: Number
 
 silentNightInMeasures = 26.0 :: Number -- includes 2m transition
 
-silentNightInBeats = silentNightInMeasures * 3.0
+silentNightInBeats = silentNightInMeasures * 3.0 :: Number
 
-silentNightInBeatsAsTime = silentNightInBeats * 60.0 / tempo
+silentNightInBeatsAsTime = silentNightInBeats * 60.0 / tempo :: Number
 
-pieceInMeasures = measureDur * (silentNightInMeasures + silentNightInMeasures + silentNightInMeasures + introInMeasures + preCodaInMeasures) :: Number
+pieceInMeasures = measureDur * (silentNightInMeasures + silentNightInMeasures + silentNightInMeasures) :: Number
 
 roundUpTimeToNextMeasure :: Number -> MusicalInfo
 roundUpTimeToNextMeasure t =
@@ -284,11 +292,6 @@ data ChoiceEvent
 
 derive instance choiceEventEq :: Eq ChoiceEvent
 
-ding :: Number -> String -> PitchClass -> MusicM (AudioUnit D2)
-ding n s p = do
-  { time } <- ask
-  pure (pannerMono_ ("panDing" <> s) 0.0 (gainT_' ("gainDing" <> s) (epwf [ Tuple 0.0 0.0, Tuple n 0.0, Tuple (n + 0.06) 0.2, Tuple (n + 0.3) 0.05, Tuple (n + 0.7) 0.0 ] time) (sinOsc_ ("sinDing" <> s) (conv440 (pcToRefMidi p)))))
-
 choicePlayer :: String -> Number -> MusicM (AudioUnit D2)
 choicePlayer tag pshift = pure (gain_' ("gainChoice" <> tag) 0.6 (playBuf_ ("bufChoice" <> tag) "choiceBell" pshift))
 
@@ -329,14 +332,14 @@ playVerse st v vc =
   let
     vvc = verseAndChoiceToString v vc
   in
-    boundPlayer st (silentNightInBeatsAsTime + 5.0)
+    boundPlayer st (silentNightInBeatsAsTime + (if v == Verse3 then 60.0 else 5.0))
       ( do
           { time } <- ask
           let
             gp = st - time
 
             pm = if (gp < kr) then max gp 0.0 else 0.0
-          pure (if v == Verse3 && (vc == VersionOne || vc == VersionThree || vc == VersionFour || vc == VersionSeven) then pure (playBufT_ ("guitar_for_" <> vvc) "justGuitar" (defaultParam { param = 1.0, timeOffset = pm })) else Nil <> pure (playBufT_ ("verse_" <> vvc) vvc (defaultParam { param = 1.0, timeOffset = pm })))
+          pure ((if v == Verse3 && (vc == VersionOne || vc == VersionThree || vc == VersionFour || vc == VersionSeven) then pure (playBufT_ ("guitar_for_" <> vvc) "justGuitar" (defaultParam { param = 1.0, timeOffset = pm })) else Nil) <> pure (playBufT_ ("verse_" <> vvc) vvc (defaultParam { param = 1.0, timeOffset = pm })))
       )
 
 verseToString :: Verse -> String
@@ -413,27 +416,32 @@ derive instance genericTrianglePos :: Generic TrianglePos _
 instance showTrianglePos :: Show TrianglePos where
   show s = genericShow s
 
-triangleSound :: TrianglePos -> Maybe Number -> Number -> MusicM (AudioUnit D2)
-triangleSound tp dimT gp =
-  if dimT == Nothing then
-    let
-      nm = case tp of
-        TriangleTop -> "sb43"
-        TriangleLeft -> "sb38"
-        TriangleRight -> "sb33"
+triangleSound :: Number -> TrianglePos -> Maybe Number -> Int -> Number -> MusicM (AudioUnit D2)
+triangleSound gn tp dimT cm gp = do
+  { time } <- ask
+  let
+    nm = case tp of
+      TriangleTop -> "sb43"
+      TriangleLeft -> "sb38"
+      TriangleRight -> "sb33"
 
-      bo = beatGapToStartOffsetAsParam 1.0 gp
-    in
-      pure $ gain_' ("gain" <> nm) 0.5 (playBufT_ ("buffer" <> nm) nm bo)
-  else
-    mempty
+    bo = beatGapToStartOffsetAsParam 1.0 gp
+  pure
+    $ gain_' ("gain" <> nm <> show cm)
+        ( case dimT of
+            Nothing -> gn
+            Just x -> bb01 (calcSlope x 1.0 (x + 0.2) 0.0 time)
+        )
+        (playBufT_ ("buffer" <> nm <> show cm) nm bo)
 
 triangle' :: Number -> MusicM AudioListD2
 triangle' btm = do
-  { musicalInfo } <- ask
+  { time, musicalInfo } <- ask
   v <- asks getTriangleVector
   let
     mmm1 = musicalInfo { measure = musicalInfo.measure `mod` 1 }
+
+    mim = musicalInfo.measure
 
     ffm = roundUpTimeToNextMeasure btm
 
@@ -442,30 +450,44 @@ triangle' btm = do
     left = join $ flip V.index d1 <$> v
 
     right = join $ flip V.index d2 <$> v
+
+    tsnd = triangleSound (bb01 (calcSlope (btm + (0.0)) 0.0 (btm + (2.0)) 1.0 time))
+
+    curriedTop = tsnd TriangleTop top
+
+    curriedLeft = tsnd TriangleLeft left
+
+    curriedRight = tsnd TriangleRight right
+
+    curriedFirst = curriedLeft
+
+    curriedSecond = curriedTop
+
+    curriedThird = curriedRight
   let
     o
-      | musicalInfo.measure == ffm.measure && musicalInfo.beat < 0.5 = sequence $ triangleSound TriangleTop top 0.0 : Nil
+      | musicalInfo.measure == ffm.measure && musicalInfo.beat < 0.5 = sequence $ curriedFirst mim 0.0 : Nil
       | Just gap <- startM1 |< mmm1 =
         sequence
-          $ triangleSound TriangleTop top gap
-          : triangleSound TriangleRight right 0.0
+          $ curriedFirst mim gap
+          : curriedThird (mim - 1) 0.0
           : Nil
       | mmm1 ||< startM0_1 =
         sequence
-          $ triangleSound TriangleTop top 0.0
-          : triangleSound TriangleRight right 0.0
+          $ curriedFirst mim 0.0
+          : curriedThird (mim - 1) 0.0
           : Nil
       | Just gap <- startM0_1 |< mmm1
       , mmm1 ||< startM0_2 =
         sequence
-          $ triangleSound TriangleLeft left gap
-          : triangleSound TriangleTop top 0.0
+          $ curriedSecond mim gap
+          : curriedFirst mim 0.0
           : Nil
       | Just gap <- startM0_2 |< mmm1
       , mmm1 ||< startM1 =
         sequence
-          $ triangleSound TriangleRight right gap
-          : triangleSound TriangleLeft left 0.0
+          $ curriedThird mim gap
+          : curriedSecond mim 0.0
           : Nil
       | otherwise = mempty
   o
@@ -475,8 +497,6 @@ data SquarePos
   | SquarePosTopRight
   | SquarePosBottomLeft
   | SquarePosBottomRight
-
-emptySoundListToBeFilled = mempty
 
 squarePosToStr :: SquarePos -> String
 squarePosToStr SquarePosTopLeft = "square1"
@@ -507,7 +527,7 @@ squareSound tp st =
             : gainT_' ("gain_square_" <> sps) (epwf [ Tuple 0.0 0.0, Tuple (st + 0.0) 0.0, Tuple (st + 0.2) 0.7, Tuple (st + 5.0) 0.0 ] time)
                 ( playBuf_ ("buf_square_" <> sps) sps
                     ( case tp of
-                        SquarePosBottomLeft -> conv1 (-1.0)
+                        SquarePosTopRight -> conv1 (-1.0)
                         _ -> 1.0
                     )
                 )
@@ -555,9 +575,9 @@ bindBetween mn mx n = max mn (min mx n)
 bb01 :: Number -> Number
 bb01 = bindBetween 0.0 1.0
 
-maxMotionVelocity = 20.0 :: Number -- really closer to 30
+maxMotionVelocity = 17.0 :: Number -- really closer to 30
 
-windGainMultiplier = 2.0 :: Number
+windGainMultiplier = 2.6 :: Number
 
 minMotionVelocity = 0.0 :: Number
 
@@ -608,7 +628,7 @@ gearSound fadeOutT pos startT =
   in
     do
       { time } <- ask
-      pure2 (pannerMono_ ("gainPM" <> gn) (sin $ (time - startT) * pi * gp2pr pos) (gain_' ("gain" <> gn) (maybe gearMaxVol (\fot -> bindBetween 0.0 gearMaxVol (calcSlope fot gearMaxVol (fot + 4.0) 0.0 time)) fadeOutT) (loopBuf_ ("buffer_" <> gn) "gearBowl" (gp2r pos) 4.0 10.0)))
+      pure2 (pannerMono_ ("gainPM" <> gn) (sin $ (time - startT) * pi * gp2pr pos) (gain_' ("gain" <> gn) (maybe gearMaxVol (\fot -> bindBetween 0.0 gearMaxVol (calcSlope fot gearMaxVol (fot + 4.0) 0.0 time)) fadeOutT) (loopBuf_ ("buffer_" <> gn) "gearBowl" (gp2r pos) 4.0 15.0)))
 
 gearsP :: Maybe Number -> GearPos -> Number -> MusicM AudioListD2
 gearsP fadeOutT pos startT = boundPlayer startT 10000.0 (gearSound fadeOutT pos startT)
@@ -809,7 +829,7 @@ bellAudio v l = fold <$> sequence (join $ go 0 l)
   go :: Int -> List (List Number) -> List (List (MusicM AudioListD2))
   go i Nil = mempty
 
-  go i (a : b) = singleBell v i a : go (i+1) b
+  go i (a : b) = singleBell v i a : go (i + 1) b
 
 bells' :: Number -> MusicM AudioListD2
 bells' begT = do
@@ -847,7 +867,7 @@ shrinkP :: ShrinkPos -> Number -> Number -> MusicM AudioListD2
 shrinkP rp startT currentShrinkPlace = do
   { time } <- ask
   pure2
-    $ wah (show rp) "smooth" shrinkL
+    $ wah (show rp) "smooth" startT (startT + shrinkL)
         ( case rp of
             ShrinkOne -> 100
             ShrinkTwo -> 110
@@ -865,7 +885,15 @@ shrinkP rp startT currentShrinkPlace = do
                 ShrinkFive -> 89.0
                 ShrinkSix -> 91.0
         )
-        (\t -> 0.2 * bb01 (calcSlope startT 0.0 (startT + standardIntro) 1.0 t) * bb01 (calcSlope (startT + standardIntro + shrinkNormal) 1.0 (startT + standardIntro + shrinkNormal + standardOutro) 0.0 t) * currentShrinkPlace)
+        ( \t ->
+            let
+              o
+                | t < startT + standardIntro = bb01 (calcSlope startT 0.0 (startT + standardIntro) 1.0 t)
+                | t >= startT + standardIntro + shrinkNormal = bb01 (calcSlope (startT + standardIntro + shrinkNormal) 1.0 (startT + standardIntro + shrinkNormal + standardOutro) 0.0 t)
+                | otherwise = 1.0
+            in
+              o * currentShrinkPlace * 0.38 -- shrink magic number
+        )
         ( \t ->
             sin
               $ ( t
@@ -934,8 +962,10 @@ rise' btm = do
 
     six = riseF btm (join $ flip V.index d5 <$> v) time
 
-    riseEvl = (bindAndSlope btm 0.0 (btm + standardIntro) 0.7 <<< (bb01 <<< (calcSlope (btm + standardIntro + riseNormal) 1.0 (btm + standardIntro + riseNormal + standardOutro) 0.0)) <<< one <<< two <<< three <<< four <<< five <<< six) 1.0
-  pure2 (highpass_ "riseHPF" 1900.0 3.0 (gain_' ("riseGain") riseEvl (playBuf_ "riseBuf" "rise" (if time < standardIntro + btm then 1.0 else (1.0 - riseEvl) + (calcSlope (btm + standardIntro) 1.0 (btm + standardIntro + riseNormal) 1.3 time)))))
+    riseEvl = (one <<< two <<< three <<< four <<< five <<< six) 1.0
+
+    gnNow = (bindAndSlope btm 0.0 (btm + standardIntro) 1.0 <<< (bb01 <<< (calcSlope (btm + standardIntro + riseNormal) 1.0 (btm + standardIntro + riseNormal + standardOutro) 0.0))) time
+  pure2 (highpass_ "riseHPF" 1900.0 3.0 (gain_' ("riseGain") (riseEvl * gnNow) (playBuf_ "riseBuf" "rise" (if time < standardIntro + btm then 1.0 else (1.0 - riseEvl) + (calcSlope (btm + standardIntro) 1.0 (btm + standardIntro + riseNormal) 1.3 time)))))
 
 hplr i bf = pure2 $ gain_' (bf <> "gain" <> show i) 0.3 (lowpass_ (bf <> "lowpass" <> show i) 150.0 2.0 (playBuf_ (bf <> "buf" <> show i) bf 1.0))
 
@@ -1279,11 +1309,11 @@ toNel Nil = zero :| Nil
 
 toNel (h : t) = h :| t
 
-wah :: String -> String -> Number -> Int -> List Number -> (Number -> Number) -> (Number -> Number) -> Number -> AudioUnit D2
-wah tag pwave len nwahs pitches gnF panF time = pannerMono_ (tag <> "WahPanner") (panF time) (gain_ (tag <> "WahGain") (if time >= len then 0.0 else (gnF time * (triangle01 (len / (toNumber nwahs)) time) / (toNumber $ L.length pitches))) (toNel (L.mapWithIndex (\i p -> periodicOsc_ (tag <> show i) pwave (conv440 p)) pitches)))
+wah :: String -> String -> Number -> Number -> Int -> List Number -> (Number -> Number) -> (Number -> Number) -> Number -> AudioUnit D2
+wah tag pwave bgt edt nwahs pitches gnF panF time = let len = edt - bgt in pannerMono_ (tag <> "WahPanner") (panF time) (gain_ (tag <> "WahGain") (if time >= edt then 0.0 else (gnF time * (triangle01 (len / (toNumber nwahs)) time) / (toNumber $ L.length pitches))) (toNel (L.mapWithIndex (\i p -> periodicOsc_ (tag <> show i) pwave (conv440 p)) pitches)))
 
 ----
-kr = (toNumber defaultEngineInfo.msBetweenSamples) / 1000.0 :: Number
+kr = (toNumber silentNightEngineInfo.msBetweenSamples) / 1000.0 :: Number
 
 krt = kr * tempo / 60.0 :: Number
 
@@ -3142,7 +3172,8 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
       (Just cvs)
       vizAcc
     where
-    inCoda = maybe false (\v -> time >= v + pieceInMeasures) acc'.mainStarts
+    -- 10.0 hardcoded for now
+    inCoda = maybe false (\v -> time >= v + pieceInMeasures - 10.0) acc'.mainStarts
 
     codizedActivity =
       if inCoda && not acc'.initiatedCoda then
@@ -3195,7 +3226,7 @@ baseSnows = L.fromFoldable $ A.replicate snowL Nothing :: List (Maybe Number)
 
 baseBells = L.fromFoldable $ A.replicate 24 Nil :: List (List Number)
 
-allPlayerEvent =
+allPlayerEvent' =
   [ Snow baseSnows
   , Motion Nothing (Left { x: 0.18, y: 0.18 })
   , Triangle (fill (const Nothing))
@@ -3205,6 +3236,19 @@ allPlayerEvent =
   , Large Nil
   , Shrink shrinkStart
   , Rise (fill (const Nothing))
+  ] ::
+    Array PlayerEvent
+
+allPlayerEvent =
+  [ Rise (fill (const Nothing))
+  , Bells baseBells
+  , Shrink shrinkStart
+  , Triangle (fill (const Nothing))
+  , Gears (fill (const Nothing))
+  , Snow baseSnows
+  , Motion Nothing (Left { x: 0.18, y: 0.18 })
+  , Square (fill (const Nothing))
+  , Large Nil
   ] ::
     Array PlayerEvent
 
@@ -3302,6 +3346,7 @@ main =
             (0.3 +> -0.5 +> -0.4 +> -0.03 +> -0.15 +> -0.2 +> -0.05 +> -0.02 +> empty)
         res $ O.fromFoldable [ Tuple "smooth" smooth, Tuple "rich" rich ]
     -- All sounds from freesound.org are attributed to their authors.
+    , engineInfo = \res _ -> res silentNightEngineInfo
     , buffers =
       makeBuffersKeepingCache
         $ [ Tuple "metronome-wb" "https://freesound.org/data/previews/53/53403_400592-lq.mp3"
@@ -3317,7 +3362,7 @@ main =
           , Tuple "v1t3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t3.mp3"
           , Tuple "v1t4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t4.mp3"
           , Tuple "v1t5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t5.mp3"
-          , Tuple "v1t6" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t6.mp3"
+          , Tuple "v1t2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t6.mp3" -- v1t7 has bug, needs to fix
           , Tuple "v1t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t7.mp3"
           , Tuple "v1t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v1t8.mp3"
           , Tuple "v2t1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t1.mp3"
@@ -3342,7 +3387,7 @@ main =
           , Tuple "snow" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/snow.mp3"
           , Tuple "triangle" "https://freesound.org/data/previews/199/199822_3485902-hq.mp3"
           , Tuple "square1" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/Windchime/Tiny-Metal---Jangle-4.r.ogg"
-          , Tuple "square2" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/Windchime/Small---Perform-1.r.ogg"
+          , Tuple "square2" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/Windchime/Medium-Metal---Jangle-6.r.ogg"
           , Tuple "square3" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/Windchime/Tiny-Metal---Jangle-7.r.ogg"
           , Tuple "square4" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/Windchime/Large-Metal---Jangle-3.r.ogg"
           , Tuple "square5" "https://klank-share.s3-eu-west-1.amazonaws.com/in-a-sentimental-mood/Samples/Windchime/Smol-Metal---Jangle-7.r.ogg"
@@ -3512,12 +3557,3 @@ snows = [ SnowI 0.1763482237244488 0.7843392558067448 0.8736775739009528, SnowI 
 snowL = A.length snows :: Int
 
 snowList = L.fromFoldable snows :: List SnowI
-
--- large
--- - ok, but it's not clear what is going on
--- - maybe better on second verse
--- shrink
--- - no clue. too soft?
--- - maybe put on 3rd verse
--- general
--- klank should preload on start
