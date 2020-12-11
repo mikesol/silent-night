@@ -339,7 +339,7 @@ playVerse st v vc =
             gp = st - time
 
             pm = if (gp < kr) then max gp 0.0 else 0.0
-          pure ((if v == Verse3 && (vc == VersionOne || vc == VersionThree || vc == VersionFour || vc == VersionSeven) then pure (playBufT_ ("guitar_for_" <> vvc) "justGuitar" (defaultParam { param = 1.0, timeOffset = pm })) else Nil) <> pure (playBufT_ ("verse_" <> vvc) vvc (defaultParam { param = 1.0, timeOffset = pm })))
+          pure (pure (playBufT_ ("verse_" <> vvc) vvc (defaultParam { param = 1.0, timeOffset = pm })))
       )
 
 verseToString :: Verse -> String
@@ -563,8 +563,10 @@ minMotionVelocity = 0.0 :: Number
 
 motion' :: Number -> MusicM AudioListD2
 motion' st = do
-  velocity <- fromMaybe 0.0 <$> asks getMotionVelocityWithLag
-  pure2 $ gain_' ("motionGain") ((bindAndSlope minMotionVelocity 0.0 maxMotionVelocity 1.0 velocity) * windGainMultiplier) (playBuf_ ("motionBuffer") "square1" (bindAndSlope minMotionVelocity 1.0 maxMotionVelocity 1.15 velocity))
+  xpos <- fromMaybe 0.0 <$> asks getMotionVelocityWithLag
+  let
+    ______________________________ = spy "xpos" xpos
+  pure2 $ gain_' ("motionGain") xpos (playBuf_ ("motionBuffer") "square5" 1.0)
 
 data GearPos
   = GearOne
@@ -731,34 +733,6 @@ snowAudio l = fold <$> sequence (go 0 l)
 snow' :: Number -> MusicM AudioListD2
 snow' begT = (fromMaybe baseSnows <$> asks getSnowList) >>= snowAudio
 
-safeSustainTo8Wide :: NonEmpty List PitchClass -> Vec D8 (Tuple Int PitchClass)
-safeSustainTo8Wide nel = atInL 0 +> atInL 1 +> atInL 2 +> atInL 3 +> atInL 4 +> atInL 5 +> atInL 6 +> atInL 7 +> empty
-  where
-  dflt = NE.head nel
-
-  asL = L.fromFoldable (DS.fromFoldable (dflt : NE.tail nel))
-
-  ll = L.length asL
-
-  atInL i = Tuple (i `div` ll) (fromMaybe dflt (L.index asL $ i `mod` ll))
-
-data BellInstrument
-  = BellInstrument0
-  | BellInstrument1
-  | BellInstrument2
-  | BellInstrument3
-
-i2bi :: Int -> BellInstrument
-i2bi 0 = BellInstrument0
-
-i2bi 1 = BellInstrument1
-
-i2bi 2 = BellInstrument2
-
-i2bi 3 = BellInstrument3
-
-i2bi _ = BellInstrument0
-
 i2tip :: Int -> Vec D8 (Tuple Int PitchClass) -> Tuple Int PitchClass
 i2tip 0 v = V.index v d0
 
@@ -778,45 +752,19 @@ i2tip 7 v = V.index v d7
 
 i2tip _ v = V.index v d0
 
-bi2s bi =
-  ( case bi of
-      BellInstrument0 -> "m"
-      BellInstrument1 -> "kg"
-      BellInstrument2 -> "rb"
-      BellInstrument3 -> "sb"
-  )
+singleBell' :: Number -> Int -> MusicM AudioListD2
+singleBell' onset bi = pure2 (playBuf_ (show bi <> show onset) "snow" (1.0 + (toNumber bi) / 8.0))
 
-bellName :: BellInstrument -> Int -> PitchClass -> String
-bellName bi oct pc =
-  bi2s bi
-    <> show
-        ( ( case oct of
-              0 -> 0
-              1 -> 1
-              2 -> 2
-              3 -> 3
-              _ -> 3
-          )
-            * pc2i pc
-        )
+singleBell :: Int -> List Number -> List (MusicM AudioListD2)
+singleBell i a = map (\inc -> boundPlayer inc 2.0 (singleBell' inc i)) a
 
-singleBell' :: Number -> BellInstrument -> Tuple Int PitchClass -> MusicM AudioListD2
-singleBell' onset bi (Tuple oct pc) =
-  let
-    bn = bellName bi oct pc
-  in
-    pure2 (playBuf_ (bn <> show onset) bn 1.0)
-
-singleBell :: Vec D8 (Tuple Int PitchClass) -> Int -> List Number -> List (MusicM AudioListD2)
-singleBell v i a = map (\inc -> boundPlayer inc 2.0 (singleBell' inc (i2bi (i `div` 8)) (i2tip (i `mod` 8) v))) a
-
-bellAudio :: Vec D8 (Tuple Int PitchClass) -> List (List Number) -> MusicM AudioListD2
-bellAudio v l = fold <$> sequence (join $ go 0 l)
+bellAudio :: List (List Number) -> MusicM AudioListD2
+bellAudio l = fold <$> sequence (join $ go 0 l)
   where
   go :: Int -> List (List Number) -> List (List (MusicM AudioListD2))
   go i Nil = mempty
 
-  go i (a : b) = singleBell v i a : go (i + 1) b
+  go i (a : b) = singleBell i a : go (i + 1) b
 
 bells' :: Number -> MusicM AudioListD2
 bells' begT = do
@@ -831,9 +779,7 @@ bells' begT = do
         twoBeatsAhead
           | placeInPiece.beat >= 1.0 = { measure: placeInPiece.measure + 1, beat: (placeInPiece.beat + 2.0) % 3.0 }
           | otherwise = { measure: placeInPiece.measure, beat: placeInPiece.beat + 2.0 }
-
-        ss = safeSustainTo8Wide (safeSustain' placeInPiece twoBeatsAhead)
-      bellAudio ss bellsL
+      bellAudio bellsL
 
 data ShrinkPos
   = ShrinkOne
@@ -1095,138 +1041,6 @@ codaStarts = musicalInfoToTime codaStartsMI :: Number
 
 measureMinus :: MusicalInfo -> Int -> MusicalInfo
 measureMinus { measure, beat } i = { measure: measure - i, beat }
-
-introSafeSustainAb :: MusicalInfo -> NonEmpty List PitchClass
-introSafeSustainAb ma
-  | ma.beat < 2.0 = Ab :| C : Eb : Nil
-  | ma.beat < 2.0 = Ab :| Ab : C : Eb : Eb : Nil
-  | otherwise = Ab :| Eb : Nil
-
-introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-introSafeSustainDb ma mb
-  | ma.measure == mb.measure = Ab :| Ab : Bb : Db : Db : F : Nil
-  | otherwise = Ab :| Ab : Ab : Bb : Nil
-
-introSafeSustain :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-introSafeSustain ma mb
-  | ma.measure == 0 || ma.measure == 2 = introSafeSustainAb ma
-  | otherwise = introSafeSustainDb ma mb
-
-endSafeSustain :: Number -> NonEmpty List PitchClass
-endSafeSustain a
-  | a < 1.5 = Ab :| C : Eb : Eb : Nil
-  | a < 3.0 = Ab :| Eb : Nil
-  | a < 7.0 = Eb :| G : Bb : Nil
-  | otherwise = Ab :| Ab : Bb : C : C : Eb : Eb : F : G : Nil
-
-middleSafeSustain_0_4 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_0_4 ma mb
-  | ma.measure > 2 && mb.measure < 4 = Ab :| Bb : C : Eb : G : Nil
-  | mb.measure < 4 = Ab :| C : Eb : G : Nil
-  | ma.measure > 2 && mb.measure < 8 = Bb :| Eb : Eb : G : Nil
-  | otherwise = Ab :| Nil
-
-middleSafeSustain_4_6 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_4_6 ma mb
-  | ma.measure == 5 && mb.measure < 6 = Eb :| G : Bb : Db : Nil
-  | mb.measure < 6 = Eb :| G : Bb : Nil
-  | mb.measure < 8 = Eb :| Eb : G : Bb : Nil
-  | otherwise = Eb :| Nil
-
-middleSafeSustain_6_8 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_6_8 ma mb
-  | mb.measure < 8 = Ab :| Ab : Bb : C : C : Eb : G : Nil
-  | otherwise = Ab :| Eb : Nil
-
-middleSafeSustain_8_10 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_8_10 ma mb
-  | mb.measure < 10 = Db :| Db : F : F : Ab : Ab : Bb : Nil
-  | otherwise = Ab :| Ab : Bb : Nil
-
-middleSafeSustain_10_12 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_10_12 ma mb
-  | mb.measure < 12 = Ab :| Ab : Bb : C : C : Eb : G : Nil
-  | otherwise = Ab :| Eb : Nil
-
-middleSafeSustain_12_14 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_12_14 ma mb
-  | mb.measure < 14 = Db :| Db : F : F : Ab : Ab : Bb : Nil
-  | otherwise = Ab :| Ab : Bb : Nil
-
-middleSafeSustain_14_16 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_14_16 ma mb
-  | mb.measure < 16 = Ab :| Ab : Bb : C : C : Eb : G : Nil
-  | otherwise = Ab :| Eb : Nil
-
-middleSafeSustain_16_18 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_16_18 ma mb
-  | mb.measure < 19 = Eb :| G : Bb : Nil
-  | otherwise = Eb :| Bb : Nil
-
-middleSafeSustain_18_19 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_18_19 ma mb
-  | mb.measure < 19 = Ab :| Ab : C : C : Eb : Eb : G : Nil
-  | otherwise = Ab :| Eb : Nil
-
-middleSafeSustain_19_20 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_19_20 ma mb
-  | mb.measure < 20 = Db :| F : Ab : C : Nil
-  | otherwise = Ab :| Ab : C : Nil
-
-middleSafeSustain_20_21 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_20_21 ma mb
-  | mb.measure < 21 = Ab :| C : Eb : Nil
-  | otherwise = Ab :| Eb : Nil
-
-middleSafeSustain_21_22 :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain_21_22 ma mb = Eb :| G : Bb : Nil
-
-middleSafeSustain_22_23 = const introSafeSustainAb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-
-middleSafeSustain_23_24 = introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-
-middleSafeSustain_24_25 = const introSafeSustainAb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-
-middleSafeSustain_25_26 = introSafeSustainDb :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-
-middleSafeSustain :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-middleSafeSustain ma mb
-  | ma.measure < 4 = middleSafeSustain_0_4 ma mb
-  | ma.measure < 6 = middleSafeSustain_4_6 ma mb
-  | ma.measure < 8 = middleSafeSustain_6_8 ma mb
-  | ma.measure < 10 = middleSafeSustain_8_10 ma mb
-  | ma.measure < 12 = middleSafeSustain_10_12 ma mb
-  | ma.measure < 14 = middleSafeSustain_12_14 ma mb
-  | ma.measure < 16 = middleSafeSustain_14_16 ma mb
-  | ma.measure < 18 = middleSafeSustain_16_18 ma mb
-  | ma.measure < 19 = middleSafeSustain_18_19 ma mb
-  | ma.measure < 20 = middleSafeSustain_19_20 ma mb
-  | ma.measure < 21 = middleSafeSustain_20_21 ma mb
-  | ma.measure < 22 = middleSafeSustain_21_22 ma mb
-  | ma.measure < 23 = middleSafeSustain_22_23 ma mb
-  | ma.measure < 24 = middleSafeSustain_23_24 ma mb
-  | ma.measure < 25 = middleSafeSustain_24_25 ma mb
-  | ma.measure < 26 = middleSafeSustain_25_26 ma mb
-  | otherwise = Ab :| Nil
-
-safeSustain' :: MusicalInfo -> MusicalInfo -> NonEmpty List PitchClass
-safeSustain' ma mb =
-  let
-    sus
-      | ma.measure < 4 = introSafeSustain ma mb
-      | ma.measure >= 82 = endSafeSustain ((musicalInfoToTime ma) - codaStarts)
-      | otherwise = middleSafeSustain (measureMinus (measureMinus ma $ 26 * (ma.measure `div` 26)) 4) (measureMinus (measureMinus mb $ 26 * (ma.measure `div` 26)) 4)
-  in
-    sus
-
-safeSustain :: Number -> Number -> NonEmpty List PitchClass
-safeSustain a b =
-  let
-    ma = timeToMusicalInfo a
-
-    mb = timeToMusicalInfo b
-  in
-    safeSustain' ma mb
 
 ------
 pcToRefMidi :: PitchClass -> Number
@@ -2866,10 +2680,11 @@ makeCanvas acc time = do
             oldV = fromMaybe 0.0 $ getMotionVelocityWithLag acc
 
             smp = \(Tuple { x: x0, y: y0 } { x: x1, y: y1 }) ->
-              let
+              {-let
                 newM = (pythag ((y1 - y0) / h) ((x1 - x0) / w)) / kr
               in
-                setMotionVelocityWithLag (if newM > oldV then newM else max 0.0 $ oldV * targetForOneHalf)
+                setMotionVelocityWithLag (if newM > oldV then newM else max 0.0 $ oldV * targetForOneHalf)-}
+              setMotionVelocityWithLag (x1 / w)
 
             instr
               | time < i.eventStart + standardIntro + textNormal + standardOutro =
@@ -3387,8 +3202,10 @@ main =
           , Tuple "large-synth" "https://freesound.org/data/previews/353/353501_5121236-hq.mp3" -- "Ambience, Wind Chimes, A.wav" by InspectorJ (www.jshaw.co.uk) of Freesound.org
           , Tuple "large-santa" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/santa.mp3"
           , Tuple "rise" "https://freesound.org/data/previews/110/110158_649468-hq.mp3"
+          , Tuple "sb43" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/Bells/sb43.ogg"
+          , Tuple "sb38" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/Bells/sb38.ogg"
+          , Tuple "sb33" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/Bells/sb33.ogg"
           ]
-        <> join (map (\x -> map (\i -> Tuple (x <> show i) ("https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/Bells/" <> x <> show i <> ".ogg")) (A.range 0 47)) [ "m", "kg", "sb", "rb" ])
     }
 
 newtype Interactions
