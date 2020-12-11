@@ -336,7 +336,7 @@ playVerse st v vc =
             gp = st - time
 
             pm = if (gp < kr) then max gp 0.0 else 0.0
-          pure2 $ playBufT_ ("verse_" <> vvc) vvc (defaultParam { param = 1.0, timeOffset = pm })
+          pure (if v == Verse3 && (vc == VersionOne || vc == VersionThree || vc == VersionFour || vc == VersionSeven) then pure (playBufT_ ("guitar_for_" <> vvc) "justGuitar" (defaultParam { param = 1.0, timeOffset = pm })) else Nil <> pure (playBufT_ ("verse_" <> vvc) vvc (defaultParam { param = 1.0, timeOffset = pm })))
       )
 
 verseToString :: Verse -> String
@@ -809,7 +809,7 @@ bellAudio v l = fold <$> sequence (join $ go 0 l)
   go :: Int -> List (List Number) -> List (List (MusicM AudioListD2))
   go i Nil = mempty
 
-  go i (a : b) = singleBell v i a : go i b
+  go i (a : b) = singleBell v i a : go (i+1) b
 
 bells' :: Number -> MusicM AudioListD2
 bells' begT = do
@@ -915,7 +915,7 @@ shrink' btm = do
 riseMaxVol = 1.0 :: Number
 
 riseF :: Number -> Maybe Number -> Number -> Number -> Number
-riseF startT didStop time gn = gn * (maybe riseMaxVol (\n -> calcSlope n (riseMaxVol) (n + 2.0) 0.5 time) didStop)
+riseF startT didStop time gn = gn * (maybe riseMaxVol (\n -> bindAndSlope n (riseMaxVol) (n + 2.0) 0.5 time) didStop)
 
 rise' :: Number -> MusicM AudioListD2
 rise' btm = do
@@ -934,8 +934,8 @@ rise' btm = do
 
     six = riseF btm (join $ flip V.index d5 <$> v) time
 
-    riseEvl = (one <<< two <<< three <<< four <<< five <<< six) 1.0
-  pure2 (highpass_ "riseHPF" 1900.0 3.0 (gain_' ("riseGain") riseEvl (playBuf_ "riseBuf" "rise" (if time < standardIntro + btm then 1.0 else (1.0 - riseEvl) + (calcSlope (btm + standardIntro) 1.0 (btm + standardIntro + riseNormal) 1.7 time)))))
+    riseEvl = (bindAndSlope btm 0.0 (btm + standardIntro) 0.7 <<< (bb01 <<< (calcSlope (btm + standardIntro + riseNormal) 1.0 (btm + standardIntro + riseNormal + standardOutro) 0.0)) <<< one <<< two <<< three <<< four <<< five <<< six) 1.0
+  pure2 (highpass_ "riseHPF" 1900.0 3.0 (gain_' ("riseGain") riseEvl (playBuf_ "riseBuf" "rise" (if time < standardIntro + btm then 1.0 else (1.0 - riseEvl) + (calcSlope (btm + standardIntro) 1.0 (btm + standardIntro + riseNormal) 1.3 time)))))
 
 hplr i bf = pure2 $ gain_' (bf <> "gain" <> show i) 0.3 (lowpass_ (bf <> "lowpass" <> show i) 150.0 2.0 (playBuf_ (bf <> "buf" <> show i) bf 1.0))
 
@@ -1652,7 +1652,8 @@ setBellsList = setInter bellsLens :: AccumulatorSetter (List (List Number))
 
 setBellsEndTime = setEndTime bellsLens :: EndTimeSetter
 
-gearsEndTimeBleed = standardEndTimeBleed :: Number
+-- make a bit longer just in case for ringing
+gearsEndTimeBleed = standardEndTimeBleed + 10.0 :: Number
 
 gearsLens = amark <<< prop (SProxy :: SProxy "gears")
 
@@ -3328,13 +3329,14 @@ main =
           , Tuple "v2t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t7.mp3"
           , Tuple "v2t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v2t8.mp3"
           , Tuple "v3t1" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t1.mp3"
-          , Tuple "v3t2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t2.mp3"
+          , Tuple "v3t2" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/replaceSomething.mp3" -- "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t2-t1.ogg"
           , Tuple "v3t3" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t3.mp3"
           , Tuple "v3t4" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t4.mp3"
           , Tuple "v3t5" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t5.mp3"
           , Tuple "v3t6" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t6.mp3"
           , Tuple "v3t7" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t7.mp3"
           , Tuple "v3t8" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/v3t8.mp3"
+          , Tuple "justGuitar" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/justGuitar.ogg"
           , Tuple "choiceBell" "https://freesound.org/data/previews/411/411089_5121236-hq.mp3"
           , Tuple "motion" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/motion-no-howl-2.ogg"
           , Tuple "snow" "https://klank-share.s3-eu-west-1.amazonaws.com/silent-night/snow.mp3"
@@ -3511,26 +3513,11 @@ snowL = A.length snows :: Int
 
 snowList = L.fromFoldable snows :: List SnowI
 
--- verse
--- - dropout of guitar too drastic in 3 for some of them
--- - need to either remix with guitar or, if too klunky, new guitar rec
--- rise
--- - buggy
--- - sound goes up too fast
--- - needs to fade in for muccch longer
--- - maybe in third verse
 -- large
 -- - ok, but it's not clear what is going on
 -- - maybe better on second verse
--- bells
--- - only first sound (top left) is playing for some reason
 -- shrink
 -- - no clue. too soft?
 -- - maybe put on 3rd verse
--- gears
--- - nice
--- - good for beginning
--- - there should be a fade at the end
--- - end cutoff is somewhat abrupt...
 -- general
 -- klank should preload on start
