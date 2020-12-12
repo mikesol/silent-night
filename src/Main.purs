@@ -33,7 +33,6 @@ import Data.Tuple (Tuple(..), fst, snd, uncurry)
 import Data.Typelevel.Num (D2, D3, D4, D6, D8, d0, d1, d2, d3, d4, d5, d6, d7)
 import Data.Vec (Vec, empty, fill, (+>))
 import Data.Vec as V
-import Debug.Trace (spy)
 import Effect (Effect)
 import Effect.Aff (Aff, Milliseconds(..), delay, try)
 import Effect.Exception (Error)
@@ -564,9 +563,7 @@ minMotionVelocity = 0.0 :: Number
 motion' :: Number -> MusicM AudioListD2
 motion' st = do
   xpos <- fromMaybe 0.0 <$> asks getMotionVelocityWithLag
-  let
-    ______________________________ = spy "xpos" xpos
-  pure2 $ gain_' ("motionGain") xpos (playBuf_ ("motionBuffer") "square5" 1.0)
+  pure2 $ gain_' ("motionGain") xpos (loopBuf_ ("motionBuffer") "square5" 1.0 0.0 0.0)
 
 data GearPos
   = GearOne
@@ -2977,7 +2974,7 @@ scene inter evts acc' ci'@(CanvasInfo ci) time = go <$> (interactionLog inter)
       vizAcc
     where
     -- 10.0 hardcoded for now
-    inCoda = maybe false (\v -> time >= v + pieceInMeasures - 10.0) acc'.mainStarts
+    inCoda = maybe false (\v -> time >= v + pieceInMeasures - 15.0) acc'.mainStarts
 
     codizedActivity =
       if inCoda && not acc'.initiatedCoda then
