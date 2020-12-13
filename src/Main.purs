@@ -45,7 +45,7 @@ import FRP.Event (Event, makeEvent, subscribe)
 import Foreign.Object as O
 import Graphics.Canvas (Rectangle)
 import Graphics.Drawing (Drawing, Point, arc, circle, fillColor, filled, lineWidth, outlineColor, outlined, rectangle, text)
-import Graphics.Drawing.Font (FontOptions, bold, font, italic, sansSerif)
+import Graphics.Drawing.Font (FontOptions, bold, customFont, font, italic, sansSerif)
 import Math (abs, cos, pi, pow, sin, (%))
 import Prim.Row (class Cons)
 import Type.Klank.Dev (Klank', affable, defaultEngineInfo, klank)
@@ -434,7 +434,7 @@ triangleSound gn tp dimT stT = do
         $ gain_' ("gain" <> nm <> show stT)
             ( case dimT of
                 Nothing -> gn
-                Just x -> bb01 (calcSlope x 1.0 (x + 0.2) 0.0 time)
+                Just x -> bb01 (calcSlope x 1.0 (x + crotchet * 6.0) 0.0 time)
             )
             (playBufT_ ("buffer" <> nm <> show stT) nm bo)
     )
@@ -562,8 +562,22 @@ minMotionVelocity = 0.0 :: Number
 
 motion' :: Number -> MusicM AudioListD2
 motion' st = do
-  xpos <- fromMaybe 0.0 <$> asks getMotionVelocityWithLag
-  pure2 $ gain_' ("motionGain") xpos (loopBuf_ ("motionBuffer") "square5" 1.0 0.0 0.0)
+  { x, y } <- fromMaybe { x: 0.0, y: 0.0 } <$> asks getMotionPos
+  { time } <- ask
+  let
+    introB = st + standardIntro
+
+    vol
+      | time < introB = bb01 $ calcSlope st 0.0 introB 1.0 time
+      | stopPt <- introB + motionNormal
+      , time >= stopPt = bb01 $ calcSlope stopPt 1.0 (stopPt + standardOutro) 0.0 time
+      | otherwise = 1.0
+  pure2
+    $ gain_ ("motionswell") vol
+        ( gain_' ("motionGain") (1.0 - x) (loopBuf_ ("motionBuffer") "square5" 1.0 0.0 0.0)
+            :| gain_' ("motionWindGain") (1.0 - y) (loopBuf_ ("motionWindBuffer") "motion" 1.0 0.0 0.0)
+            : Nil
+        )
 
 data GearPos
   = GearOne
@@ -1421,7 +1435,7 @@ motionLens = amark <<< prop (SProxy :: SProxy "motion")
 
 getMotionBegTime = getBegTime motionLens :: BegTimeGetter
 
-getMotionVelocityWithLag = getInter motionLens
+getMotionPos = getInter motionLens
 
 getMotionEndTime = getEndTime motionLens :: EndTimeGetter
 
@@ -1430,7 +1444,7 @@ setMotionBegTime = setBegTime motionLens :: BegTimeSetter
 normalizePoints :: Number -> Number -> Tuple Point Point -> Tuple Point Point
 normalizePoints w h (Tuple { x: x0, y: y0 } { x: x1, y: y1 }) = Tuple { x: x0 / w, y: y0 / h } { x: x1 / w, y: y1 / h }
 
-setMotionVelocityWithLag = setInter motionLens :: AccumulatorSetter Number
+setMotionPos = setInter motionLens :: AccumulatorSetter Point
 
 setMotionEndTime = setEndTime motionLens :: EndTimeSetter
 
@@ -1563,7 +1577,7 @@ type SquareMarker
   = VecMarker D4 -- startPts end
 
 type MotionMarker
-  = Marker Number -- intensity
+  = Marker Point -- intensity
 
 type RiseMarker
   = VecMarker D6 -- startPts end
@@ -2258,8 +2272,8 @@ makeCanvas acc time = do
         pure
           $ Tuple acc
               ( text
-                  ( font sansSerif
-                      (if time > silentNightDark then 20 else 48)
+                  ( font (if time > silentNightDark then sansSerif else customFont "Parisienne")
+                      (if time > silentNightDark then 20 else 60)
                       (if time > silentNightDark then mempty else bold)
                   )
                   (w / 2.0 - if time > silentNightDark then 140.0 else 160.0)
@@ -2674,14 +2688,8 @@ makeCanvas acc time = do
 
             textNormal = 1.0
 
-            oldV = fromMaybe 0.0 $ getMotionVelocityWithLag acc
-
             smp = \(Tuple { x: x0, y: y0 } { x: x1, y: y1 }) ->
-              {-let
-                newM = (pythag ((y1 - y0) / h) ((x1 - x0) / w)) / kr
-              in
-                setMotionVelocityWithLag (if newM > oldV then newM else max 0.0 $ oldV * targetForOneHalf)-}
-              setMotionVelocityWithLag (x1 / w)
+              setMotionPos { x: (x1 / w), y: (y1 / h) }
 
             instr
               | time < i.eventStart + standardIntro + textNormal + standardOutro =
