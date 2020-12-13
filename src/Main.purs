@@ -2273,10 +2273,10 @@ makeCanvas acc time = do
           $ Tuple acc
               ( text
                   ( font (if time > silentNightDark then sansSerif else customFont "Parisienne")
-                      (if time > silentNightDark then 20 else 60)
+                      (if time > silentNightDark then 36 else 60)
                       (if time > silentNightDark then mempty else bold)
                   )
-                  (w / 2.0 - if time > silentNightDark then 140.0 else 160.0)
+                  (w / 2.0 - if time > silentNightDark then 230.0 else 160.0)
                   (h / 2.0)
                   (fillColor (whiteRGBA (introOpacity time)))
                   if time > silentNightDark then "Click on or press the circles" else "Silent Night"
