@@ -724,7 +724,6 @@ largeListF st (foo : bar) = largeListF st bar
 
 large' :: Number -> MusicM AudioListD2
 large' begT = do
-  { musicalInfo } <- ask
   ll <- fromMaybe Nil <$> asks getLargeList
   largeListF begT ll
 
