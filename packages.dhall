@@ -166,6 +166,15 @@ let additions = {
           "https://github.com/mikesol/type.klank.dev.git"
       , version =
           "main"
+      },
+    klank-dev-util =
+      { dependencies =
+          [ "audio-behaviors"
+          ]
+      , repo =
+          "https://github.com/mikesol/util.klank.dev.git"
+      , version =
+          "main"
       }
 
       

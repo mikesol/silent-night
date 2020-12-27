@@ -9,7 +9,8 @@ import Data.Typelevel.Num (D1)
 import FRP.Behavior (Behavior)
 import FRP.Behavior.Audio (AudioParameter, AudioUnit, decodeAudioDataFromUri, evalPiecewise, gain', gainT', playBuf, runInBrowser, speaker')
 import Foreign.Object as O
-import Type.Klank.Dev (Buffers, Klank, affable, defaultEngineInfo, klank)
+import Klank.Dev.Util (affable)
+import Type.Klank.Dev (Buffers, Klank, defaultEngineInfo, klank)
 
 kr = (toNumber defaultEngineInfo.msBetweenSamples) / 1000.0 :: Number
 

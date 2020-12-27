@@ -10,6 +10,7 @@
   , "quickcheck"
   , "typelevel-klank-dev"
   , "web-touchevents"
+  , "klank-dev-util"
   ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs" ]
