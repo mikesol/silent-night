@@ -266,7 +266,10 @@ introLoopPlayer = do
   o
 
 introLoop :: MusicM AudioListD2
-introLoop = introLoopPlayer
+introLoop = do
+  { time } <- ask
+  ilp <- introLoopPlayer
+  pure2 $ gain_ "introLoopFader" (bindBetween 0.0 0.7 $ calcSlope (2.0 * crotchet) 0.0 (10.0 * crotchet) 0.7 time) (toNel ilp)
 
 data ChoiceEvent
   = ChoiceEventA
@@ -3319,5 +3322,4 @@ snowL = A.length snows :: Int
 
 snowList = L.fromFoldable snows :: List SnowI
 
--- make motion chimes
--- redo triangle, simply does not work
+-- https://klank.dev/?noterm&nostop&url=https://klank-share.s3.eu-west-1.amazonaws.com/K16078511421631047.purs&klank=https://klank-share.s3.amazonaws.com/klank1607851143240248.js
